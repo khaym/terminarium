@@ -4,4 +4,7 @@
 //! driven from the outside via `State::advance`, which is also how offline
 //! progress is settled (settlement == the same simulation).
 
+pub mod app;
 pub mod engine;
+pub mod save;
+pub mod ui;
