@@ -166,6 +166,23 @@ main() {
     WARNINGS+=(".gitignore file not found")
   fi
 
+  # 4. Rust checks (format + lint; tests stay out of the hook for speed).
+  # Non-interactive shells may miss ~/.cargo/bin on PATH, so probe it
+  # explicitly; a Rust repo must not commit unchecked, so absence is an error.
+  if [ -f "Cargo.toml" ]; then
+    local cargo_bin
+    cargo_bin=$(command -v cargo || true)
+    if [ -z "$cargo_bin" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+      cargo_bin="$HOME/.cargo/bin/cargo"
+    fi
+    if [ -n "$cargo_bin" ]; then
+      "$cargo_bin" fmt --check || ERRORS+=("cargo fmt --check failed (run 'cargo fmt')")
+      "$cargo_bin" clippy --all-targets --quiet -- -D warnings || ERRORS+=("cargo clippy reported warnings")
+    else
+      ERRORS+=("Cargo.toml present but cargo not found; install Rust or fix PATH")
+    fi
+  fi
+
   # Output
   if [ ${#WARNINGS[@]} -gt 0 ]; then
     echo "=== Pre-commit warnings ==="

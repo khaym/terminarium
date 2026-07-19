@@ -1,0 +1,12 @@
+[package]
+# Working name — the game is unnamed yet (naming is out of scope of the first
+# slice); rename the package when the name is decided.
+name = "tui-game"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+# A deterministic economy must fail loudly rather than wrap silently.
+[profile.release]
+overflow-checks = true
