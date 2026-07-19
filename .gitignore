@@ -1,0 +1,24 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Environment / secrets (never commit)
+.env
+.env.*
+.envrc
+*.pem
+*.key
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Local-only — deliberately kept out of the (eventually public) repo.
+# Revisit each of these before sharing publicly.
+/.claude/
+/CLAUDE.md
+/.devcontainer/
+/work/
