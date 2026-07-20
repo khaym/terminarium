@@ -125,9 +125,10 @@ fn cost_curve_saturates_instead_of_wrapping() {
 
 /// Invariant 5 — no-op bootstrap: from a single placed base rock, the passive
 /// loop {advance(1) → collect → try to buy algae} affords the first algae
-/// within the 60-second opening (no other intervention).
+/// within the 15-second opening (no other intervention). The run-start seed
+/// currency is what pulls this inside a single peek.
 #[test]
-fn first_algae_bootstraps_from_rock_within_60s() {
+fn first_algae_bootstraps_from_rock_within_15s() {
     let p = Params::default();
     let mut s = State::new();
     assert!(s.place_rock(0, 0, &p));
@@ -141,8 +142,8 @@ fn first_algae_bootstraps_from_rock_within_60s() {
             break;
         }
         assert!(
-            seconds < 60,
-            "first algae must be affordable within 60s of rock output"
+            seconds < 15,
+            "first algae must be affordable within 15s of rock output"
         );
     }
     println!("first algae bought after {seconds}s of rock output");

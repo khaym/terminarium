@@ -48,7 +48,8 @@ pub struct RockKind {
     /// Placement budget this kind consumes (an allocation, never currency).
     pub cost: u32,
     /// Detritus shed per tick. Effective from placement — the emergence delay
-    /// gates housing only, never output (this is the run's first currency).
+    /// gates housing only, never output (the run's only income until life is
+    /// bought; the seed grant is a one-time boost, not income).
     pub output: u128,
     /// Ticks after run start before this kind's housing counts toward capacity.
     pub delay: u64,
@@ -78,6 +79,11 @@ pub struct Params {
     pub rock_kinds: Vec<RockKind>,
     /// Placement budget available at the start of a run (allocation type).
     pub placement_budget: u32,
+    /// Currency granted once, when the run's first rock is placed, so the first
+    /// algae is reachable within a single peek rather than ~48s of rock output.
+    /// Deliberately short of the first algae's cost — the player still watches
+    /// the rock→sediment→collect→buy causal chain close over a few seconds.
+    pub seed_currency: u128,
 }
 
 impl Default for Params {
@@ -98,6 +104,7 @@ impl Default for Params {
                 capacity: [4, 3, 2, 1],
             }],
             placement_budget: 1,
+            seed_currency: 80 * MICRO,
         }
     }
 }

@@ -58,6 +58,11 @@ impl State {
     /// budget (placed costs + this cost). A rejected placement leaves the state
     /// untouched and returns false — placement spends budget, never currency or
     /// any other resource.
+    ///
+    /// Placing the run's *first* rock also grants the seed currency once, so the
+    /// first algae is reachable within a single peek. It is gated on the reef
+    /// being empty before the push — a per-rock grant would leak free currency
+    /// as the placement budget grows (#11).
     pub fn place_rock(&mut self, kind: usize, slot: u8, p: &Params) -> bool {
         if self.tick_count != 0 || kind >= p.rock_kinds.len() || slot >= SLOTS {
             return false;
@@ -69,7 +74,11 @@ impl State {
         if placed.saturating_add(p.rock_kinds[kind].cost) > p.placement_budget {
             return false;
         }
+        let first_rock = self.rocks.is_empty();
         self.rocks.push(Rock { kind, slot });
+        if first_rock {
+            self.currency += p.seed_currency;
+        }
         true
     }
 
@@ -78,9 +87,10 @@ impl State {
     pub fn tick(&mut self, p: &Params) {
         let mut detritus: u128 = 0;
 
-        // 1. Rock output — the run's first currency and a steady source. The
-        // emergence delay gates housing only (see `capacity`), never output, so
-        // detritus accrues from the moment a rock is placed.
+        // 1. Rock output — the run's only income until life is bought, and a
+        // steady source after. The emergence delay gates housing only (see
+        // `capacity`), never output, so detritus accrues from the moment a
+        // rock is placed.
         for rock in &self.rocks {
             detritus += p.rock_kinds[rock.kind].output;
         }
