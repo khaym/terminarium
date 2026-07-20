@@ -5,6 +5,7 @@
 //! progress is settled (settlement == the same simulation).
 
 pub mod app;
+pub mod cli;
 pub mod engine;
 pub mod save;
 pub mod ui;

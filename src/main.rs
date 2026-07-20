@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crossterm::event::{self, Event, KeyEventKind};
 use tui_game::app::App;
 use tui_game::engine::Params;
-use tui_game::{save, ui};
+use tui_game::{cli, save, ui};
 
 const POLL_TIMEOUT: Duration = Duration::from_millis(50);
 const FRAME_INTERVAL: Duration = Duration::from_millis(200);
@@ -30,10 +30,22 @@ fn unix_now_ms() -> u64 {
 }
 
 fn main() -> io::Result<()> {
+    // A bad flag is the caller's error: surface it and exit non-zero rather
+    // than falling back to real time (which would silently ignore the mistake).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let options = match cli::parse(&args) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(2);
+        }
+    };
+
     let params = Params::default();
-    let path = save::default_path();
-    let state = save::load(&path, &params, unix_now());
+    let path = save::path_for(options.time_scale);
+    let state = save::load(&path, &params, unix_now(), options.time_scale);
     let mut app = App::new(state, params);
+    app.time_scale = options.time_scale;
 
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &mut app, &path);

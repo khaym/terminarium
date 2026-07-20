@@ -41,6 +41,11 @@ pub struct App {
     /// during the placement phase (game layer, run not started).
     pub placement_cursor: u8,
     pub should_quit: bool,
+    /// Multiplier applied to wall-clock time on the way into the engine — the
+    /// one knob of the test-only fast mode. 1 is real time; the binary raises
+    /// it via `--time-scale`. Kept public so `main` sets it without threading a
+    /// new `App::new` argument through every test.
+    pub time_scale: u64,
     tick_acc_ms: u64,
 }
 
@@ -55,6 +60,7 @@ impl App {
             // Start mid-floor so the first move goes either way.
             placement_cursor: SLOTS / 2,
             should_quit: false,
+            time_scale: 1,
             tick_acc_ms: 0,
         }
     }
@@ -133,9 +139,14 @@ impl App {
     /// nothing to advance (mirroring the engine contract that the caller must
     /// not `advance` pre-placement), so accumulated time and the run clock both
     /// start fresh at placement.
+    ///
+    /// This is one of the two places wall-clock time enters the engine (the
+    /// other is offline settlement in `save::load`); both scale it by
+    /// `time_scale` for the test-only fast mode. The multiply saturates so an
+    /// extreme scale cannot overflow the accumulator.
     pub fn on_elapsed(&mut self, ms: u64) {
         if self.state.run_started() {
-            self.tick_acc_ms += ms;
+            self.tick_acc_ms += ms.saturating_mul(self.time_scale);
             while self.tick_acc_ms >= 1000 {
                 self.tick_acc_ms -= 1000;
                 self.state.tick(&self.params);
@@ -373,6 +384,49 @@ mod tests {
         app.on_elapsed(700);
         expected.tick(&app.params);
         assert_eq!(app.state, expected, "the carried 300ms completes a tick");
+    }
+
+    #[test]
+    fn time_scale_defaults_to_real_time() {
+        let app = app_with(State::new());
+        assert_eq!(app.time_scale, 1);
+    }
+
+    #[test]
+    fn time_scale_multiplies_elapsed_before_ticking() {
+        let mut state = State::new();
+        assert!(state.place_rock(0, 0, &Params::default()));
+        state.population[0] = 1;
+        let mut app = app_with(state.clone());
+        app.time_scale = 60;
+
+        // At 60x, one wall-clock second is a full minute of ticks.
+        app.on_elapsed(1_000);
+        let mut expected = state.clone();
+        expected.advance(60, &app.params);
+        assert_eq!(app.state, expected, "scale=60: 1000ms = 60 ticks");
+    }
+
+    #[test]
+    fn time_scale_carries_the_sub_tick_remainder() {
+        let mut state = State::new();
+        assert!(state.place_rock(0, 0, &Params::default()));
+        state.population[0] = 1;
+        let mut app = app_with(state.clone());
+        app.time_scale = 60;
+
+        // 10ms * 60 = 600ms scaled: not a full tick yet, so it carries.
+        app.on_elapsed(10);
+        assert_eq!(app.state, state, "600ms scaled is still sub-tick");
+
+        // Another 10ms * 60 = 600ms, 1200ms scaled total: one tick, 200 carried.
+        app.on_elapsed(10);
+        let mut expected = state.clone();
+        expected.tick(&app.params);
+        assert_eq!(
+            app.state, expected,
+            "the carried remainder completes a tick"
+        );
     }
 
     #[test]

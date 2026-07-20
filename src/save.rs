@@ -31,6 +31,18 @@ pub fn default_path() -> PathBuf {
     base.join("tui-game/save.txt")
 }
 
+/// Which save file to use for the given time scale. Real time (scale 1) uses
+/// the real save; any fast-forward is a throwaway test run and gets its own
+/// sibling file so it never clobbers a genuine save.
+pub fn path_for(time_scale: u64) -> PathBuf {
+    let path = default_path();
+    if time_scale == 1 {
+        path
+    } else {
+        path.with_file_name("save.test.txt")
+    }
+}
+
 pub fn serialize(state: &State, saved_at: u64) -> String {
     let pools = state
         .pool
@@ -166,7 +178,12 @@ pub fn store(path: &Path, state: &State, now: u64) -> io::Result<()> {
 /// Load and settle the absence. Missing file → fresh start. A file that
 /// fails to parse is our own corruption (internal origin) → set it aside as
 /// .bak and degrade to a fresh start rather than erroring or destroying data.
-pub fn load(path: &Path, params: &Params, now: u64) -> State {
+///
+/// `time_scale` is the fast-mode multiplier — this is the offline counterpart
+/// of `App::on_elapsed`, the other place wall-clock time enters the engine.
+/// The elapsed seconds are scaled (saturating) so the same knob speeds up both
+/// live ticking and settlement; 1 is real time.
+pub fn load(path: &Path, params: &Params, now: u64, time_scale: u64) -> State {
     let Ok(text) = fs::read_to_string(path) else {
         return State::new();
     };
@@ -175,7 +192,8 @@ pub fn load(path: &Path, params: &Params, now: u64) -> State {
             // Before the first rock the clock does not run, so an absence
             // settles nothing (see State::run_started).
             if state.run_started() {
-                state.advance(now.saturating_sub(saved_at), params);
+                let elapsed = now.saturating_sub(saved_at).saturating_mul(time_scale);
+                state.advance(elapsed, params);
             }
             state
         }
@@ -241,12 +259,43 @@ mod tests {
         let state = sample_state();
         store(&path, &state, 1_000).expect("store");
 
-        let settled = load(&path, &params, 1_300);
+        let settled = load(&path, &params, 1_300, 1);
 
         let mut expected = state;
         expected.advance(300, &params);
         assert_eq!(settled, expected);
         cleanup(&path);
+    }
+
+    #[test]
+    fn load_scales_offline_progress() {
+        let path = temp_save_path("scaled");
+        let params = Params::default();
+        let state = sample_state();
+        store(&path, &state, 1_000).expect("store");
+
+        // 10 wall-clock seconds at 60x settle as 600 ticks.
+        let settled = load(&path, &params, 1_010, 60);
+
+        let mut expected = state;
+        expected.advance(600, &params);
+        assert_eq!(settled, expected);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_scale_uses_a_sibling_save_file() {
+        let real = path_for(1);
+        assert_eq!(real, default_path());
+        assert_eq!(real.file_name().unwrap(), "save.txt");
+
+        let test = path_for(60);
+        assert_eq!(test.file_name().unwrap(), "save.test.txt");
+        assert_eq!(
+            test.parent(),
+            real.parent(),
+            "the test save sits beside the real one"
+        );
     }
 
     #[test]
@@ -256,7 +305,7 @@ mod tests {
         let state = sample_state();
         store(&path, &state, 1_000).expect("store");
 
-        assert_eq!(load(&path, &params, 500), state);
+        assert_eq!(load(&path, &params, 500, 1), state);
         cleanup(&path);
     }
 
@@ -270,14 +319,14 @@ mod tests {
         state.pool[0] = 10 * MICRO;
         store(&path, &state, 1_000).expect("store");
 
-        assert_eq!(load(&path, &params, 1_000_000), state);
+        assert_eq!(load(&path, &params, 1_000_000, 1), state);
         cleanup(&path);
     }
 
     #[test]
     fn missing_file_starts_fresh() {
         let path = temp_save_path("missing");
-        assert_eq!(load(&path, &Params::default(), 42), State::new());
+        assert_eq!(load(&path, &Params::default(), 42, 1), State::new());
     }
 
     #[test]
@@ -286,7 +335,7 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "v=1\nsaved_at=oops\n").unwrap();
 
-        let state = load(&path, &Params::default(), 42);
+        let state = load(&path, &Params::default(), 42, 1);
 
         assert_eq!(state, State::new());
         assert!(!path.exists(), "corrupt file must be moved away");
