@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::engine::{Params, Rock, State, SLOTS, SPECIES};
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 /// Sanity bound on parsed populations. Legitimate play tops out near ~620 per
 /// species (the cost curve saturates u128 there), while HUD cost display is
@@ -64,8 +64,13 @@ pub fn serialize(state: &State, saved_at: u64) -> String {
         .join(",");
     format!(
         "v={VERSION}\nsaved_at={saved_at}\npopulation={populations}\npool={pools}\n\
-         nutrient={}\ncollectable={}\ncurrency={}\nrocks={rocks}\nage={}\n",
-        state.nutrient, state.collectable, state.currency, state.tick_count,
+         nutrient={}\ncollectable={}\ncurrency={}\nscore={}\nrocks={rocks}\nage={}\nstarted={}\n",
+        state.nutrient,
+        state.collectable,
+        state.currency,
+        state.score,
+        state.tick_count,
+        u8::from(state.started),
     )
 }
 
@@ -81,8 +86,10 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
     let mut nutrient: Option<u128> = None;
     let mut collectable: Option<u128> = None;
     let mut currency: Option<u128> = None;
+    let mut score: Option<u128> = None;
     let mut rocks: Option<Vec<Rock>> = None;
     let mut tick_count: Option<u64> = None;
+    let mut started: Option<bool> = None;
 
     for line in text.lines() {
         let (key, value) = line.split_once('=')?;
@@ -94,8 +101,10 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
             "nutrient" => set_once(&mut nutrient, value.parse().ok()?)?,
             "collectable" => set_once(&mut collectable, value.parse().ok()?)?,
             "currency" => set_once(&mut currency, value.parse().ok()?)?,
+            "score" => set_once(&mut score, value.parse().ok()?)?,
             "rocks" => set_once(&mut rocks, parse_rocks(value, params)?)?,
             "age" => set_once(&mut tick_count, value.parse().ok()?)?,
+            "started" => set_once(&mut started, parse_flag(value)?)?,
             _ => return None,
         }
     }
@@ -112,9 +121,35 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
         nutrient: nutrient?,
         collectable: collectable?,
         currency: currency?,
+        score: score?,
         rocks: rocks?,
         tick_count: tick_count?,
+        started: started?,
     };
+    // Reject forms a legitimate playthrough could not produce: a rock of a kind
+    // the score has not unlocked, a placement over the score's budget, or a
+    // clock that ran without the run having started.
+    if state
+        .rocks
+        .iter()
+        .any(|r| params.rock_kinds[r.kind].unlock > state.score)
+    {
+        return None;
+    }
+    let placed_cost: u32 = state
+        .rocks
+        .iter()
+        .map(|r| params.rock_kinds[r.kind].cost)
+        .sum();
+    if placed_cost > params.budget(state.score) {
+        return None;
+    }
+    if !state.started && state.tick_count > 0 {
+        return None;
+    }
+    if state.started && state.rocks.is_empty() {
+        return None; // starting requires a rock, and removal ends at start
+    }
     Some((state, saved_at?))
 }
 
@@ -124,6 +159,15 @@ fn set_once<T>(slot: &mut Option<T>, value: T) -> Option<()> {
     }
     *slot = Some(value);
     Some(())
+}
+
+/// A 0/1 flag; anything else means the file is not ours.
+fn parse_flag(value: &str) -> Option<bool> {
+    match value {
+        "0" => Some(false),
+        "1" => Some(true),
+        _ => None,
+    }
 }
 
 fn parse_array<T: std::str::FromStr + Copy + Default>(value: &str) -> Option<[T; SPECIES]> {
@@ -215,7 +259,7 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::MICRO;
+    use crate::engine::{RockKind, MICRO};
 
     fn sample_state() -> State {
         State {
@@ -224,8 +268,12 @@ mod tests {
             nutrient: 1_234_567,
             collectable: 42 * MICRO,
             currency: 120 * MICRO + 1,
+            // Two base rocks (Σcost 2) need budget 2, so the score must clear
+            // the first budget step; the clock has run, so the run is started.
+            score: 12_000 * MICRO,
             rocks: vec![Rock { kind: 0, slot: 0 }, Rock { kind: 0, slot: 2 }],
             tick_count: 137,
+            started: true,
         }
     }
 
@@ -324,6 +372,22 @@ mod tests {
     }
 
     #[test]
+    fn placement_in_progress_save_is_not_settled() {
+        let path = temp_save_path("placing");
+        let params = Params::default();
+        // Rocks placed but the run not yet committed (started=0): the clock is
+        // not running, so an absence settles nothing — the player returns to
+        // the placement screen with the reef intact.
+        let mut state = State::new();
+        assert!(state.place_rock(0, 0, &params));
+        assert!(!state.run_started());
+        store(&path, &state, 1_000).expect("store");
+
+        assert_eq!(load(&path, &params, 1_000_000, 1), state);
+        cleanup(&path);
+    }
+
+    #[test]
     fn missing_file_starts_fresh() {
         let path = temp_save_path("missing");
         assert_eq!(load(&path, &Params::default(), 42, 1), State::new());
@@ -365,16 +429,107 @@ mod tests {
         let p = Params::default();
         let good = serialize(&sample_state(), 1);
         assert!(parse(&good, &p).is_some());
-        // Kind out of range (the default table has only kind 0).
-        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=1:0,0:2"), &p).is_none());
+        // Kind out of range (the default table has kinds 0..=2).
+        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=3:0"), &p).is_none());
         // Slot at or beyond SLOTS.
         assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=0:0,0:5"), &p).is_none());
         // Duplicated slot.
         assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=0:0,0:0"), &p).is_none());
         // Malformed pair (missing the kind:slot separator).
         assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=00,0:2"), &p).is_none());
-        // An empty rock list is valid (a save from before the first placement).
-        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks="), &p).is_some());
+    }
+
+    #[test]
+    fn v2_saves_are_rejected() {
+        // The version is a breaking bump: a v2 save must be set aside, not
+        // read as if it were current.
+        let p = Params::default();
+        let good = serialize(&sample_state(), 1);
+        assert!(parse(&good, &p).is_some());
+        assert!(parse(&good.replace("v=3", "v=2"), &p).is_none());
+    }
+
+    #[test]
+    fn a_rock_locked_above_the_score_is_rejected() {
+        // A cost-1 kind (always within budget 1) that only unlocks at 5,000:
+        // this isolates the unlock check from the budget check.
+        let p = Params {
+            rock_kinds: vec![
+                RockKind {
+                    name: "base",
+                    cost: 1,
+                    unlock: 0,
+                    output: MICRO,
+                    delay: 0,
+                    capacity: [1, 0, 0, 0],
+                },
+                RockKind {
+                    name: "gated",
+                    cost: 1,
+                    unlock: 5_000 * MICRO,
+                    output: MICRO,
+                    delay: 0,
+                    capacity: [1, 0, 0, 0],
+                },
+            ],
+            budget_steps: vec![(0, 1)],
+            ..Params::default()
+        };
+        // Score 0: the gated kind is not yet unlocked → rejected.
+        let locked = State {
+            rocks: vec![Rock { kind: 1, slot: 0 }],
+            ..State::new()
+        };
+        assert!(parse(&serialize(&locked, 1), &p).is_none());
+        // Score past the unlock (and within budget): accepted.
+        let cleared = State {
+            score: 5_000 * MICRO,
+            rocks: vec![Rock { kind: 1, slot: 0 }],
+            ..State::new()
+        };
+        assert!(parse(&serialize(&cleared, 1), &p).is_some());
+    }
+
+    #[test]
+    fn rocks_over_budget_are_rejected() {
+        // Score 12,000 unlocks coral and grants budget 2. A rock (cost 1) plus a
+        // coral (cost 2) is Σcost 3 — over budget — although both kinds are
+        // unlocked, so only the budget check catches it.
+        let p = Params::default();
+        let over = State {
+            score: 12_000 * MICRO,
+            started: true,
+            rocks: vec![Rock { kind: 0, slot: 0 }, Rock { kind: 1, slot: 1 }],
+            tick_count: 5,
+            ..State::new()
+        };
+        assert!(parse(&serialize(&over, 1), &p).is_none());
+    }
+
+    #[test]
+    fn a_started_run_without_rocks_is_rejected() {
+        // start_run demands at least one rock and removal ends at start, so a
+        // started run with an empty reef cannot arise in play. A fresh save
+        // (not started, empty reef) stays valid.
+        let p = Params::default();
+        let started_empty = State {
+            started: true,
+            ..State::new()
+        };
+        assert!(parse(&serialize(&started_empty, 1), &p).is_none());
+        assert!(parse(&serialize(&State::new(), 1), &p).is_some());
+    }
+
+    #[test]
+    fn a_started_flag_contradicting_the_clock_is_rejected() {
+        // The clock only runs after start, so started=0 with a non-zero clock
+        // cannot arise in play.
+        let p = Params::default();
+        let good = serialize(&sample_state(), 1);
+        assert!(parse(&good, &p).is_some());
+        assert!(parse(&good.replace("started=1", "started=0"), &p).is_none());
+        // A bare flag value that is neither 0 nor 1 is not ours.
+        assert!(parse(&good.replace("started=1", "started=yes"), &p).is_none());
     }
 
     #[test]
@@ -382,7 +537,7 @@ mod tests {
         let p = Params::default();
         let good = serialize(&sample_state(), 1);
         assert!(parse(&good, &p).is_some());
-        assert!(parse(&good.replace("v=2", "v=1"), &p).is_none());
+        assert!(parse(&good.replace("v=3", "v=1"), &p).is_none());
         assert!(parse(&format!("{good}extra=1\n"), &p).is_none());
         assert!(parse(&good.replace("population=3,1,0,0", "population=3,1,0"), &p).is_none());
         assert!(parse(

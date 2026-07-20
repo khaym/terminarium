@@ -40,6 +40,16 @@ const DETRITUS: Color = Color::Indexed(101);
 const SEDIMENT: Color = Color::Indexed(94);
 /// Rock body — a neutral reef gray in the indexed ramp.
 const ROCK: Color = Color::Indexed(245);
+/// Coral rock body — a warm rose, well clear of the orange fish tones.
+const CORAL: Color = Color::Indexed(174);
+/// Kelp holdfast — a muted olive anchoring the frond forest to the floor.
+const KELP_HOLDFAST: Color = Color::Indexed(58);
+/// Base algae tint for the coral reef — a denser teal-green than plain rock.
+const CORAL_ALGAE: Color = Color::Indexed(37);
+/// Kelp fronds — a taller, brighter forest green; the reef's whole character.
+const KELP_ALGAE: Color = Color::Indexed(70);
+/// The dugong: the kelp forest's apex grazer, a warm tan sea cow.
+const DUGONG: Color = Color::Indexed(180);
 
 /// Collectable surplus represented by one cell of floor sediment.
 const SEDIMENT_PER_CELL: u128 = 30 * MICRO;
@@ -57,21 +67,106 @@ const SMALL_RADIUS: i64 = 5;
 const BIG_RADIUS: i64 = 10;
 
 /// Look of the base species (algae) for a given rock kind. Structured as a
-/// table so a new rock kind's variant is added as data, not code — the first
-/// run offers only kind 0, but the shape is ready for the food-web branches.
+/// table so a new rock kind's variant is added as data, not code. Each kind's
+/// base layer looks different, so a reef reads by its greenery alone.
 struct AlgaeVariant {
     /// Two sway frames of the frond glyph.
     fronds: [&'static str; 2],
     color: Color,
 }
 
-const ALGAE_VARIANTS: [AlgaeVariant; 1] = [AlgaeVariant {
-    fronds: ["(", ")"],
-    color: ALGAE,
-}];
+const ALGAE_VARIANTS: [AlgaeVariant; 3] = [
+    // rock: the founding sea's sparse fronds (unchanged look).
+    AlgaeVariant {
+        fronds: ["(", ")"],
+        color: ALGAE,
+    },
+    // coral: a denser, teal-tinged base layer.
+    AlgaeVariant {
+        fronds: ["{", "}"],
+        color: CORAL_ALGAE,
+    },
+    // kelp: tall swaying blades — the frond forest is this reef's signature.
+    AlgaeVariant {
+        fronds: ["\\", "/"],
+        color: KELP_ALGAE,
+    },
+];
 
 fn algae_variant(kind: usize) -> &'static AlgaeVariant {
     &ALGAE_VARIANTS[kind % ALGAE_VARIANTS.len()]
+}
+
+/// Look of the rock body itself for a given kind — same table shape as the
+/// algae and big-fish variants, so a new kind is a data row, not new code. The
+/// glyph tells kinds apart even in the dim placement ghost, where color does
+/// not; color carries the difference for a placed reef.
+struct RockVariant {
+    /// Three body glyphs drawn left / center / right of the rock column.
+    body: [&'static str; 3],
+    color: Color,
+}
+
+const ROCK_VARIANTS: [RockVariant; 3] = [
+    // rock: a low block mound.
+    RockVariant {
+        body: ["▄", "█", "▄"],
+        color: ROCK,
+    },
+    // coral: branches spreading up from a stem.
+    RockVariant {
+        body: ["╱", "█", "╲"],
+        color: CORAL,
+    },
+    // kelp: a solid, wide holdfast.
+    RockVariant {
+        body: ["▙", "█", "▟"],
+        color: KELP_HOLDFAST,
+    },
+];
+
+fn rock_variant(kind: usize) -> &'static RockVariant {
+    &ROCK_VARIANTS[kind % ROCK_VARIANTS.len()]
+}
+
+/// Look of the apex individual for a given host-rock kind. A big fish over rock
+/// and coral; a slower, tan dugong over kelp — the top species takes on its
+/// reef's character. Keyed only by the host rock's kind, so it stays a pure
+/// function of (state, frame) like every other sprite.
+struct BigVariant {
+    right: &'static str,
+    left: &'static str,
+    /// Frames per column step; higher is slower (the dugong ambles).
+    slowdown: u64,
+    color: Color,
+}
+
+const BIG_VARIANTS: [BigVariant; 3] = [
+    // rock
+    BigVariant {
+        right: "><)))>",
+        left: "<(((><",
+        slowdown: 2,
+        color: BIG_FISH,
+    },
+    // coral
+    BigVariant {
+        right: "><)))>",
+        left: "<(((><",
+        slowdown: 2,
+        color: BIG_FISH,
+    },
+    // kelp: a rounded sea cow, ambling slower than a fish.
+    BigVariant {
+        right: "=(__)o",
+        left: "o(__)=",
+        slowdown: 3,
+        color: DUGONG,
+    },
+];
+
+fn big_variant(kind: usize) -> &'static BigVariant {
+    &BIG_VARIANTS[kind % BIG_VARIANTS.len()]
 }
 
 pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
@@ -134,14 +229,17 @@ fn rock_centroid_x(app: &App, area: Rect) -> u16 {
     (sum / rocks.len() as u64) as u16
 }
 
-/// A small block-glyph rock cluster sitting on the floor at column `x`. Shared
-/// by the live wallpaper (real rock) and the placement screen (dim preview).
-pub(crate) fn draw_rock(area: Rect, buf: &mut Buffer, x: u16, y: u16, color: Color) {
+/// A small block-glyph rock cluster sitting on the floor at column `x`. The
+/// body glyphs come from `kind`'s variant so each reef has its own silhouette;
+/// `color` is passed in so the live wallpaper draws the real reef color while
+/// the placement screen reuses the same shape in a dim preview tone.
+pub(crate) fn draw_rock(area: Rect, buf: &mut Buffer, x: u16, y: u16, kind: usize, color: Color) {
     let style = Style::new().fg(color).bg(WATER);
+    let body = rock_variant(kind).body;
     let bx = i64::from(x);
-    put(buf, area, bx - 1, y, "▄", style);
-    put(buf, area, bx, y, "█", style);
-    put(buf, area, bx + 1, y, "▄", style);
+    put(buf, area, bx - 1, y, body[0], style);
+    put(buf, area, bx, y, body[1], style);
+    put(buf, area, bx + 1, y, body[2], style);
 }
 
 /// A single dim floor tick marking a free placement slot.
@@ -159,7 +257,15 @@ pub(crate) fn draw_slot_marker(area: Rect, buf: &mut Buffer, x: u16, y: u16, col
 fn draw_rocks(app: &App, area: Rect, buf: &mut Buffer) {
     let y = area.bottom() - 1;
     for rock in &app.state.rocks {
-        draw_rock(area, buf, slot_center_x(area, rock.slot), y, ROCK);
+        let color = rock_variant(rock.kind).color;
+        draw_rock(
+            area,
+            buf,
+            slot_center_x(area, rock.slot),
+            y,
+            rock.kind,
+            color,
+        );
     }
 }
 
@@ -324,6 +430,10 @@ fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64) {
     }
     for i in 0..big {
         let rock = &rocks[(i % n) as usize];
+        // The apex individual takes on its host reef's character: a dugong over
+        // kelp, a big fish elsewhere. Same length (6 cells) as the fish, so the
+        // patrol clamp keeps it fully drawn even in a thin pane.
+        let v = big_variant(rock.kind);
         patrol(
             area,
             buf,
@@ -331,11 +441,11 @@ fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64) {
             h,
             rock,
             i / n,
-            "><)))>",
-            "<(((><",
-            2,
+            v.right,
+            v.left,
+            v.slowdown,
             BIG_RADIUS,
-            BIG_FISH,
+            v.color,
             false,
         );
     }

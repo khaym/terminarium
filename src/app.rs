@@ -40,6 +40,12 @@ pub struct App {
     /// Floor slot the placement cursor sits on, in `0..SLOTS`. Only meaningful
     /// during the placement phase (game layer, run not started).
     pub placement_cursor: u8,
+    /// Rock kind the placement cursor will drop. Cycled among the kinds the
+    /// score has unlocked; only meaningful during the placement phase.
+    pub placement_kind: usize,
+    /// Whether a "start a new sea?" confirmation is awaiting a keypress. While
+    /// set, buy input is suppressed until the prompt is answered.
+    pub new_sea_pending: bool,
     pub should_quit: bool,
     /// Multiplier applied to wall-clock time on the way into the engine — the
     /// one knob of the test-only fast mode. 1 is real time; the binary raises
@@ -59,6 +65,8 @@ impl App {
             flash: None,
             // Start mid-floor so the first move goes either way.
             placement_cursor: SLOTS / 2,
+            placement_kind: 0,
+            new_sea_pending: false,
             should_quit: false,
             time_scale: 1,
             tick_acc_ms: 0,
@@ -92,9 +100,20 @@ impl App {
         if self.layer != Layer::Game {
             return;
         }
-        // Before the first rock lands the game layer is the placement screen.
+        // Before the run is committed the game layer is the placement screen.
         if !self.state.run_started() {
             self.handle_placement(code);
+            return;
+        }
+        // A pending "new sea?" prompt swallows the next key: 'y' confirms,
+        // anything else cancels — and either way no buy fires this keystroke.
+        if self.new_sea_pending {
+            self.new_sea_pending = false;
+            if code == KeyCode::Char('y') {
+                self.state.reset();
+                self.placement_cursor = SLOTS / 2;
+                self.placement_kind = 0;
+            }
             return;
         }
         match code {
@@ -110,13 +129,19 @@ impl App {
             KeyCode::Char('4') => {
                 self.state.buy(Species::BigFish, &self.params);
             }
+            // Arm the new-sea confirmation; nothing changes until it is answered.
+            KeyCode::Char('n') => {
+                self.new_sea_pending = true;
+            }
             _ => {}
         }
         self.drain_surplus();
     }
 
-    /// Placement-phase input: walk the cursor across the floor slots (wrapping
-    /// at the ends) and drop the base rock, which starts the run.
+    /// Placement-phase input: move the cursor across the floor slots (h/l or
+    /// arrows, wrapping), cycle the rock kind among those unlocked (j/k or
+    /// arrows), drop the selected kind (enter) or lift the one under the cursor
+    /// (backspace/delete), and commit the run (s).
     fn handle_placement(&mut self, code: KeyCode) {
         match code {
             KeyCode::Left | KeyCode::Char('h') => {
@@ -125,12 +150,39 @@ impl App {
             KeyCode::Right | KeyCode::Char('l') => {
                 self.placement_cursor = (self.placement_cursor + 1) % SLOTS;
             }
+            KeyCode::Up | KeyCode::Char('k') => self.cycle_kind(1),
+            KeyCode::Down | KeyCode::Char('j') => self.cycle_kind(-1),
             KeyCode::Enter => {
                 self.state
-                    .place_rock(0, self.placement_cursor, &self.params);
+                    .place_rock(self.placement_kind, self.placement_cursor, &self.params);
+            }
+            KeyCode::Backspace | KeyCode::Delete => {
+                self.state.remove_rock(self.placement_cursor);
+            }
+            KeyCode::Char('s') => {
+                self.state.start_run(&self.params);
             }
             _ => {}
         }
+    }
+
+    /// Move `placement_kind` by `delta` steps through the unlocked kinds
+    /// (wrapping). Kinds are ordered by unlock score, so the unlocked ones form
+    /// a prefix the score decides.
+    fn cycle_kind(&mut self, delta: i32) {
+        let unlocked: Vec<usize> = (0..self.params.rock_kinds.len())
+            .filter(|&k| self.state.score >= self.params.rock_kinds[k].unlock)
+            .collect();
+        if unlocked.is_empty() {
+            return;
+        }
+        let here = unlocked
+            .iter()
+            .position(|&k| k == self.placement_kind)
+            .unwrap_or(0) as i32;
+        let n = unlocked.len() as i32;
+        let next = (here + delta).rem_euclid(n) as usize;
+        self.placement_kind = unlocked[next];
     }
 
     /// Wall-clock milliseconds → whole engine ticks (1 tick = 1 s); the
@@ -239,9 +291,11 @@ mod tests {
     fn game_input_works_only_in_game_layer() {
         let params = Params::default();
         let mut state = State::new();
-        // A placed rock gives algae housing, so the buy gate is capacity, not
-        // the missing placement UI (that lands in the next slice).
+        // A committed run with algae housing, so the buy gate is capacity, not
+        // the placement screen. currency is set after start so the seed grant
+        // does not perturb the fixed amount.
         assert!(state.place_rock(0, 0, &params));
+        assert!(state.start_run(&params));
         state.currency = 1_000 * MICRO;
         let mut app = App::new(state, params);
         let none = KeyModifiers::NONE;
@@ -259,18 +313,15 @@ mod tests {
 
     #[test]
     fn no_time_flows_before_the_run_starts() {
-        // On the placement screen (game layer, no rock yet) the clock must not
-        // run: ticking here would advance tick_count and slam the placement
-        // gate shut before the player ever places a rock.
+        // On the placement screen (game layer, run not committed) the clock must
+        // not run: the emergence delay and rock output are both anchored to the
+        // start, so nothing should age while the player is still composing.
         let mut app = app_with(State::new());
         app.on_resize(100, 30);
         assert!(!app.state.run_started());
 
         app.on_elapsed(10_000);
-        assert_eq!(
-            app.state.tick_count, 0,
-            "no rock means no run means no ticks"
-        );
+        assert_eq!(app.state.tick_count, 0, "an uncommitted run means no ticks");
         assert!(!app.state.run_started());
     }
 
@@ -307,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_places_the_cursor_rock_and_starts_the_run() {
+    fn enter_places_a_rock_and_s_starts_the_run() {
         let mut app = app_with(State::new());
         app.on_resize(100, 30);
         let none = KeyModifiers::NONE;
@@ -317,16 +368,28 @@ mod tests {
         app.on_key(KeyCode::Enter, none);
 
         assert!(
-            app.state.run_started(),
-            "Enter drops the rock and begins the run"
+            !app.state.run_started(),
+            "Enter drops a rock but no longer begins the run"
         );
         assert_eq!(app.state.rocks.len(), 1);
         assert_eq!(app.state.rocks[0].kind, 0);
         assert_eq!(app.state.rocks[0].slot, 3);
 
-        // Once the run has started the clock runs again.
+        // The clock stays still until the run is committed.
         app.on_elapsed(3_000);
-        assert!(app.state.tick_count > 0, "time flows after placement");
+        assert_eq!(app.state.tick_count, 0, "no clock before start");
+
+        // 's' commits the placement and starts the run.
+        app.on_key(KeyCode::Char('s'), none);
+        assert!(app.state.run_started(), "s begins the run");
+        assert_eq!(
+            app.state.currency, app.params.seed_currency,
+            "start grants the seed once"
+        );
+
+        // Once the run has started the clock runs.
+        app.on_elapsed(3_000);
+        assert!(app.state.tick_count > 0, "time flows after start");
     }
 
     #[test]
@@ -349,6 +412,111 @@ mod tests {
     }
 
     #[test]
+    fn placement_cycles_only_unlocked_kinds() {
+        let mut app = app_with(State::new());
+        app.on_resize(100, 30);
+        let none = KeyModifiers::NONE;
+
+        // Score 0: only the base rock is unlocked, so cycling is a no-op.
+        assert_eq!(app.placement_kind, 0);
+        app.on_key(KeyCode::Up, none);
+        assert_eq!(app.placement_kind, 0, "only rock unlocked at score 0");
+
+        // Score past coral's unlock brings a second kind into the cycle.
+        app.state.score = 12_000 * MICRO;
+        app.on_key(KeyCode::Up, none);
+        assert_eq!(app.placement_kind, 1, "coral now selectable");
+        app.on_key(KeyCode::Up, none);
+        assert_eq!(app.placement_kind, 0, "cycle wraps back to rock");
+        app.on_key(KeyCode::Char('j'), none);
+        assert_eq!(app.placement_kind, 1, "j walks the other way");
+    }
+
+    #[test]
+    fn place_several_reefs_remove_one_then_start() {
+        let mut state = State::new();
+        state.score = 12_000 * MICRO; // budget 2 admits two base rocks
+        let mut app = app_with(state);
+        app.on_resize(100, 30);
+        let none = KeyModifiers::NONE;
+
+        app.on_key(KeyCode::Enter, none); // rock at cursor 2
+        app.on_key(KeyCode::Right, none); // cursor -> 3
+        app.on_key(KeyCode::Enter, none); // rock at 3
+        assert_eq!(app.state.rocks.len(), 2);
+        assert!(!app.state.run_started(), "placing does not start the run");
+
+        // Backspace lifts the rock under the cursor (slot 3).
+        app.on_key(KeyCode::Backspace, none);
+        assert_eq!(app.state.rocks.len(), 1);
+        assert_eq!(app.state.rocks[0].slot, 2);
+
+        app.on_key(KeyCode::Char('s'), none);
+        assert!(app.state.run_started());
+        assert_eq!(
+            app.state.currency, app.params.seed_currency,
+            "the seed is granted once, at start"
+        );
+    }
+
+    #[test]
+    fn new_sea_needs_confirmation_and_a_stray_key_cancels() {
+        let mut state = State::new();
+        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.start_run(&Params::default()));
+        state.score = 500 * MICRO;
+        state.population[0] = 2;
+        let mut app = app_with(state);
+        app.on_resize(100, 30);
+        let none = KeyModifiers::NONE;
+
+        // 'n' arms the prompt but changes nothing yet.
+        app.on_key(KeyCode::Char('n'), none);
+        assert!(app.new_sea_pending);
+        assert!(app.state.run_started());
+        assert_eq!(app.state.population[0], 2);
+
+        // Any non-'y' key cancels, leaving the run untouched.
+        app.on_key(KeyCode::Char('x'), none);
+        assert!(!app.new_sea_pending, "the prompt is dismissed");
+        assert!(app.state.run_started());
+        assert_eq!(app.state.population[0], 2);
+
+        // Arm again and confirm: reset to a fresh placement, keeping score.
+        app.on_key(KeyCode::Char('n'), none);
+        app.on_key(KeyCode::Char('y'), none);
+        assert!(!app.state.run_started(), "y returns to placement");
+        assert!(app.state.rocks.is_empty());
+        assert_eq!(app.state.population, [0, 0, 0, 0]);
+        assert_eq!(app.state.score, 500 * MICRO, "score survives the new sea");
+        assert_eq!(app.placement_cursor, SLOTS / 2);
+        assert_eq!(app.placement_kind, 0);
+    }
+
+    #[test]
+    fn buy_is_suppressed_while_new_sea_is_pending() {
+        let mut state = State::new();
+        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.start_run(&Params::default()));
+        state.currency = 1_000 * MICRO;
+        let mut app = app_with(state);
+        app.on_resize(100, 30);
+        let none = KeyModifiers::NONE;
+
+        app.on_key(KeyCode::Char('n'), none); // arm the prompt
+        app.on_key(KeyCode::Char('1'), none); // would buy algae — but cancels instead
+        assert_eq!(
+            app.state.population[0], 0,
+            "a buy key does not fire while the prompt is pending"
+        );
+        assert!(!app.new_sea_pending, "and it dismisses the prompt");
+
+        // With the prompt gone the same key buys.
+        app.on_key(KeyCode::Char('1'), none);
+        assert_eq!(app.state.population[0], 1);
+    }
+
+    #[test]
     fn quit_works_in_both_layers() {
         let mut app = app_with(State::new());
         app.on_resize(40, 12);
@@ -364,8 +532,9 @@ mod tests {
     #[test]
     fn elapsed_milliseconds_accumulate_into_whole_ticks() {
         let mut state = State::new();
-        // A live run is the precondition for ticking; place a rock first.
+        // A live run is the precondition for ticking; place and start first.
         assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.start_run(&Params::default()));
         state.population[0] = 1;
         let mut app = app_with(state.clone());
 
@@ -396,6 +565,7 @@ mod tests {
     fn time_scale_multiplies_elapsed_before_ticking() {
         let mut state = State::new();
         assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.start_run(&Params::default()));
         state.population[0] = 1;
         let mut app = app_with(state.clone());
         app.time_scale = 60;
@@ -411,6 +581,7 @@ mod tests {
     fn time_scale_carries_the_sub_tick_remainder() {
         let mut state = State::new();
         assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.start_run(&Params::default()));
         state.population[0] = 1;
         let mut app = app_with(state.clone());
         app.time_scale = 60;

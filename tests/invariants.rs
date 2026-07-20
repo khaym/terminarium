@@ -23,6 +23,7 @@ fn conservation_per_tick() {
     let p = Params::default();
     let mut s = populated_state();
     assert!(s.place_rock(0, 0, &p));
+    assert!(s.start_run(&p));
     let rock_output = p.rock_kinds[0].output;
     for _ in 0..10_000 {
         let before = s.biomass();
@@ -58,6 +59,8 @@ fn advance_is_compositional() {
     let mut split = populated_state();
     assert!(whole.place_rock(0, 0, &p));
     assert!(split.place_rock(0, 0, &p));
+    assert!(whole.start_run(&p));
+    assert!(split.start_run(&p));
 
     whole.advance(1_000, &p);
     split.advance(400, &p);
@@ -73,6 +76,7 @@ fn determinism_under_operation_script() {
     let p = Params::default();
     let script = |s: &mut State| {
         s.place_rock(0, 0, &p);
+        s.start_run(&p);
         for t in 0..600u64 {
             s.tick(&p);
             if t % 90 == 0 {
@@ -132,6 +136,7 @@ fn first_algae_bootstraps_from_rock_within_15s() {
     let p = Params::default();
     let mut s = State::new();
     assert!(s.place_rock(0, 0, &p));
+    assert!(s.start_run(&p));
 
     let mut seconds = 0u64;
     loop {
@@ -159,6 +164,7 @@ fn first_wall_at_two_to_three_peeks() {
 
     let mut s = State::new();
     assert!(s.place_rock(0, 0, &p));
+    assert!(s.start_run(&p));
     s.population[Species::Algae as usize] = 1;
 
     let mut peeks = 0u32;
@@ -271,6 +277,7 @@ fn steady_state_after_capacity_is_filled() {
     let p = Params::default();
     let mut s = State::new();
     assert!(s.place_rock(0, 0, &p));
+    assert!(s.start_run(&p));
 
     // Fill to the base rock's housing: [4, 3, 2, 1].
     for (i, sp) in [
@@ -322,7 +329,9 @@ fn steady_state_after_capacity_is_filled() {
 fn emergence_delay_gates_housing_not_output() {
     const DELAY: u64 = 5;
     let delayed = RockKind {
+        name: "delayed",
         cost: 1,
+        unlock: 0,
         output: 3 * MICRO,
         delay: DELAY,
         capacity: [2, 0, 0, 0],
@@ -333,6 +342,7 @@ fn emergence_delay_gates_housing_not_output() {
     };
     let mut s = State::new();
     assert!(s.place_rock(0, 0, &p));
+    assert!(s.start_run(&p));
 
     let algae = Species::Algae as usize;
     for _ in 0..DELAY {
@@ -356,4 +366,231 @@ fn emergence_delay_gates_housing_not_output() {
         s.collectable > 0,
         "rock output accrues from placement, not after the delay"
     );
+}
+
+/// Fill every species to the housing the given reef provides, letting emergence
+/// delays elapse first, then converge and measure the collectable gained over a
+/// window — the steady collection rate of a filled tank.
+fn steady_collection_over_window(rocks: &[(usize, u8)], score: u128, window: u64) -> u128 {
+    let p = Params::default();
+    let mut s = State::new();
+    s.score = score;
+    for &(kind, slot) in rocks {
+        assert!(
+            s.place_rock(kind, slot, &p),
+            "reef {rocks:?} must place within unlock/budget at score {score}"
+        );
+    }
+    assert!(s.start_run(&p));
+
+    // Let the slowest housing emerge (kelp is 300 ticks), then fill to capacity.
+    s.advance(600, &p);
+    for i in 0..4 {
+        s.population[i] = s.capacity(i, &p);
+    }
+
+    // Converge, then measure a same-length window.
+    s.advance(30_000, &p);
+    let before = s.collectable;
+    s.advance(window, &p);
+    s.collectable - before
+}
+
+/// Invariant 11 — gradient: after coral unlocks (score 12,000), a re-placed run
+/// that spends budget 2 (either rock×2 or a single coral) collects faster at
+/// steady state than the old budget-1 rock does. This is the existence proof
+/// that rebuilding pays off.
+#[test]
+fn regrown_reef_out_collects_the_old_one() {
+    const WINDOW: u64 = 5_000;
+    let t1 = 12_000 * MICRO;
+
+    let old = steady_collection_over_window(&[(0, 0)], 0, WINDOW);
+    let rock_x2 = steady_collection_over_window(&[(0, 0), (0, 1)], t1, WINDOW);
+    let coral = steady_collection_over_window(&[(1, 0)], t1, WINDOW);
+
+    assert!(
+        rock_x2 > old,
+        "rock×2 (budget 2) must out-collect rock×1: {rock_x2} vs {old}"
+    );
+    assert!(
+        coral > old,
+        "coral (budget 2) must out-collect rock×1: {coral} vs {old}"
+    );
+}
+
+/// Invariant 12 — unlock stride: playing the opening greedily (each 90s peek:
+/// advance, collect, buy everything affordable with housing) reaches the first
+/// unlock (score 12,000) *after* the tank has filled, and within twelve peeks
+/// of it. The first wall comes first; the first unlock lands a handful of peeks
+/// later.
+#[test]
+fn first_unlock_lands_within_twelve_peeks_of_the_wall() {
+    let p = Params::default();
+    const PEEK: u64 = 90;
+    let t1 = 12_000 * MICRO;
+
+    let mut s = State::new();
+    assert!(s.place_rock(0, 0, &p));
+    assert!(s.start_run(&p));
+    let cap: [u32; 4] = [
+        s.capacity(0, &p),
+        s.capacity(1, &p),
+        s.capacity(2, &p),
+        s.capacity(3, &p),
+    ];
+
+    let mut p_fill: Option<u32> = None;
+    let mut p_t1: Option<u32> = None;
+    for peek in 1..=200u32 {
+        s.advance(PEEK, &p);
+        s.collect();
+        // Greedy: keep buying anything affordable with housing until a full
+        // pass buys nothing.
+        loop {
+            let mut bought = false;
+            for sp in [
+                Species::Algae,
+                Species::Plankton,
+                Species::SmallFish,
+                Species::BigFish,
+            ] {
+                if s.buy(sp, &p) {
+                    bought = true;
+                }
+            }
+            if !bought {
+                break;
+            }
+        }
+        if p_fill.is_none() && (0..4).all(|i| s.population[i] == cap[i]) {
+            p_fill = Some(peek);
+        }
+        if p_t1.is_none() && s.score >= t1 {
+            p_t1 = Some(peek);
+        }
+        if p_fill.is_some() && p_t1.is_some() {
+            break;
+        }
+    }
+
+    let p_fill = p_fill.expect("housing must fill");
+    let p_t1 = p_t1.expect("score must reach the first unlock");
+    println!("P_fill={p_fill} P_T1={p_t1}");
+    assert!(
+        p_fill < p_t1,
+        "the wall must come before the first unlock (P_fill={p_fill}, P_T1={p_t1})"
+    );
+    assert!(
+        p_t1 <= p_fill + 12,
+        "first unlock within 12 peeks of the wall (P_fill={p_fill}, P_T1={p_t1})"
+    );
+}
+
+/// Score is the running tally of collected detritus — every `collect` adds the
+/// surplus to both currency and the lifetime score.
+#[test]
+fn collect_accumulates_lifetime_score() {
+    let mut s = State::new();
+    s.collectable = 100 * MICRO;
+    s.collect();
+    assert_eq!(s.score, 100 * MICRO);
+    assert_eq!(s.currency, 100 * MICRO);
+    assert_eq!(s.collectable, 0);
+
+    s.collectable = 50 * MICRO;
+    s.collect();
+    assert_eq!(s.score, 150 * MICRO, "score accumulates across collects");
+    assert_eq!(s.currency, 150 * MICRO);
+}
+
+/// `reset` (new sea) keeps only the lifetime score; everything else about the
+/// run returns to the initial state.
+#[test]
+fn reset_keeps_score_and_clears_the_run() {
+    let p = Params::default();
+    let mut s = State::new();
+    assert!(s.place_rock(0, 0, &p));
+    assert!(s.start_run(&p));
+    s.advance(200, &p);
+    s.collect();
+    s.population = [1, 1, 0, 0];
+    let kept = s.score;
+    assert!(kept > 0);
+
+    s.reset();
+
+    assert_eq!(s.score, kept, "score survives a new sea");
+    assert_eq!(s.population, [0, 0, 0, 0]);
+    assert_eq!(s.pool, [0; 4]);
+    assert_eq!(s.nutrient, 0);
+    assert_eq!(s.collectable, 0);
+    assert_eq!(s.currency, 0);
+    assert!(s.rocks.is_empty());
+    assert_eq!(s.tick_count, 0);
+    assert!(!s.run_started());
+}
+
+/// Placement is gated by the unlock score: a kind whose unlock the score has
+/// not cleared cannot be placed, and can once it has.
+#[test]
+fn placement_is_gated_by_unlock_score() {
+    let p = Params::default();
+    let mut s = State::new();
+    // Coral (kind 1) unlocks at 12,000; below that, place fails.
+    assert!(!s.place_rock(1, 0, &p), "coral is locked below its unlock");
+    assert!(s.rocks.is_empty());
+
+    s.score = 12_000 * MICRO; // clears coral's unlock and grants budget 2
+    assert!(
+        s.place_rock(1, 0, &p),
+        "coral places once unlocked and in budget"
+    );
+}
+
+/// The budget rises in steps with the score, and placement respects it.
+#[test]
+fn budget_grows_in_steps_and_gates_placement() {
+    let p = Params::default();
+    assert_eq!(p.budget(0), 1);
+    assert_eq!(p.budget(12_000 * MICRO - 1), 1);
+    assert_eq!(p.budget(12_000 * MICRO), 2);
+    assert_eq!(p.budget(30_000 * MICRO - 1), 2);
+    assert_eq!(p.budget(30_000 * MICRO), 3);
+    assert_eq!(p.budget(u128::MAX), 3);
+
+    // At score 0 the budget is 1: one base rock places, a second does not.
+    let mut s = State::new();
+    assert!(s.place_rock(0, 0, &p));
+    assert!(!s.place_rock(0, 1, &p), "budget 1 admits only one rock");
+    assert_eq!(s.rocks.len(), 1);
+}
+
+/// The placement gates close once the run starts, and the seed is granted
+/// exactly once per run — at start, and again on the next run after a new sea.
+#[test]
+fn placement_gates_close_at_start_and_seed_is_once_per_run() {
+    let p = Params::default();
+    let mut s = State::new();
+    s.score = 30_000 * MICRO; // budget 3, every kind unlocked
+
+    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_rock(0, 1, &p));
+    assert!(s.remove_rock(1), "removal works before start");
+    assert_eq!(s.rocks.len(), 1);
+    assert_eq!(s.currency, 0, "placement grants no currency");
+
+    assert!(s.start_run(&p));
+    assert_eq!(s.currency, p.seed_currency, "start grants the seed once");
+    assert!(!s.start_run(&p), "cannot start twice");
+    assert_eq!(s.currency, p.seed_currency, "no second seed");
+    assert!(!s.place_rock(0, 2, &p), "no placing after start");
+    assert!(!s.remove_rock(0), "no removing after start");
+
+    // A new sea, a fresh placement, and the seed is granted again — once.
+    s.reset();
+    assert_eq!(s.currency, 0);
+    assert!(s.place_rock(0, 0, &p));
+    assert!(s.start_run(&p));
+    assert_eq!(s.currency, p.seed_currency, "each run seeds exactly once");
 }

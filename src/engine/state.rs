@@ -18,11 +18,17 @@ pub struct State {
     pub nutrient: u128,
     pub collectable: u128,
     pub currency: u128,
-    /// Placed rocks. A run starts when the first one lands.
+    /// Lifetime score: every unit ever collected, summed across runs. Survives
+    /// `reset`; unlocks and budget are derived from it.
+    pub score: u128,
+    /// Placed rocks, all put down before the run starts.
     pub rocks: Vec<Rock>,
-    /// Ticks elapsed since the run started — the basis for emergence delay and
-    /// the placement gate.
+    /// Ticks elapsed since the run started — the basis for emergence delay.
     pub tick_count: u64,
+    /// Whether the player has committed the placement and begun the run. The
+    /// gate for placement/removal (only while false) and for the clock (only
+    /// while true).
+    pub started: bool,
 }
 
 impl State {
@@ -36,10 +42,11 @@ impl State {
         self.pool.iter().sum::<u128>() + self.nutrient + self.collectable
     }
 
-    /// A run has begun once the first rock is placed. Before that the caller
-    /// must not `advance` — the clock only runs during a live run.
+    /// A run has begun once the player commits the placement (`start_run`).
+    /// Before that the caller must not `advance` — the clock only runs during a
+    /// live run.
     pub fn run_started(&self) -> bool {
-        !self.rocks.is_empty()
+        self.started
     }
 
     /// How many individuals of `species` the placed rocks can house right now.
@@ -53,33 +60,64 @@ impl State {
             .sum()
     }
 
-    /// Place a rock at the run's start. Succeeds only before the clock runs
-    /// (`tick_count == 0`), into a free in-range slot, and within the placement
-    /// budget (placed costs + this cost). A rejected placement leaves the state
+    /// Place a rock while composing the run. Succeeds only before the run is
+    /// started, into a free in-range slot, for a kind the score has unlocked
+    /// (`score >= unlock`), and within the placement budget (placed costs +
+    /// this cost <= `budget(score)`). A rejected placement leaves the state
     /// untouched and returns false — placement spends budget, never currency or
     /// any other resource.
-    ///
-    /// Placing the run's *first* rock also grants the seed currency once, so the
-    /// first algae is reachable within a single peek. It is gated on the reef
-    /// being empty before the push — a per-rock grant would leak free currency
-    /// as the placement budget grows (#11).
     pub fn place_rock(&mut self, kind: usize, slot: u8, p: &Params) -> bool {
-        if self.tick_count != 0 || kind >= p.rock_kinds.len() || slot >= SLOTS {
+        if self.started || kind >= p.rock_kinds.len() || slot >= SLOTS {
             return false;
         }
         if self.rocks.iter().any(|r| r.slot == slot) {
             return false;
         }
-        let placed: u32 = self.rocks.iter().map(|r| p.rock_kinds[r.kind].cost).sum();
-        if placed.saturating_add(p.rock_kinds[kind].cost) > p.placement_budget {
+        if self.score < p.rock_kinds[kind].unlock {
             return false;
         }
-        let first_rock = self.rocks.is_empty();
-        self.rocks.push(Rock { kind, slot });
-        if first_rock {
-            self.currency += p.seed_currency;
+        let placed: u32 = self.rocks.iter().map(|r| p.rock_kinds[r.kind].cost).sum();
+        if placed.saturating_add(p.rock_kinds[kind].cost) > p.budget(self.score) {
+            return false;
         }
+        self.rocks.push(Rock { kind, slot });
         true
+    }
+
+    /// Remove the rock at `slot` while composing the run (for placing it
+    /// differently). Only while the run has not started; returns whether a rock
+    /// was there to remove.
+    pub fn remove_rock(&mut self, slot: u8) -> bool {
+        if self.started {
+            return false;
+        }
+        if let Some(pos) = self.rocks.iter().position(|r| r.slot == slot) {
+            self.rocks.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Commit the placement and begin the run. Succeeds when at least one rock
+    /// is placed and the run has not already started; grants the seed currency
+    /// once. This is the sole seed-grant point — one grant per run.
+    pub fn start_run(&mut self, p: &Params) -> bool {
+        if self.started || self.rocks.is_empty() {
+            return false;
+        }
+        self.started = true;
+        self.currency += p.seed_currency;
+        true
+    }
+
+    /// Start a new sea: discard the run and return to placement, keeping only
+    /// the lifetime score (and thus the unlocks and budget derived from it).
+    pub fn reset(&mut self) {
+        *self = State {
+            score: self.score,
+            ..State::default()
+        };
     }
 
     /// One simulation step (1 tick = 1 second). The step order is part of the
@@ -162,9 +200,11 @@ impl State {
         true
     }
 
-    /// Move surplus detritus into currency. When to call it (the peek) is the
-    /// UI layer's decision.
+    /// Move surplus detritus into currency, and count it toward the lifetime
+    /// score. Score is a tally of the same quantity, not a duplicate resource.
+    /// When to call it (the peek) is the UI layer's decision.
     pub fn collect(&mut self) {
+        self.score += self.collectable;
         self.currency += self.collectable;
         self.collectable = 0;
     }

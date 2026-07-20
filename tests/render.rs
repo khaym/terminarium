@@ -17,11 +17,13 @@ fn fixed_state() -> State {
         nutrient: 2 * MICRO,
         collectable: 210 * MICRO,
         currency: 420 * MICRO,
-        // A run in progress: one base rock near mid-floor and a clock past
-        // zero, so housing has emerged (capacity HUD) and the reef anchors the
-        // scene (rock, gathered life, sediment mound under it).
+        score: 0,
+        // A run in progress: started, with one base rock near mid-floor and a
+        // clock past zero, so housing has emerged (capacity HUD) and the reef
+        // anchors the scene (rock, gathered life, sediment mound under it).
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
+        started: true,
     }
 }
 
@@ -53,6 +55,17 @@ fn rendered_at_frame(state: State, width: u16, height: u16, frame: u64) -> Termi
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("terminal");
     terminal.draw(|f| ui::draw(&app, f)).expect("draw");
+    terminal
+}
+
+/// Render a pre-built app, so a test can set fields (placement_kind,
+/// new_sea_pending) before drawing. Like `rendered_terminal_with`, but the app
+/// is supplied rather than built from a bare state.
+fn rendered_terminal_of(mut app: App, width: u16, height: u16) -> Terminal<TestBackend> {
+    app.on_resize(width, height);
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|frame| ui::draw(&app, frame)).expect("draw");
     terminal
 }
 
@@ -119,13 +132,6 @@ fn game_snapshot_100x30() {
     let expected = [
         " ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~  ",
         "                                            ><)))>                                                  ",
-        "                                                    .                                               ",
-        "                                                                                                    ",
-        "                                                                                                    ",
-        "                                                                                                    ",
-        "                                                                                                    ",
-        "                                                                                                    ",
-        "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
@@ -138,7 +144,13 @@ fn game_snapshot_100x30() {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                                                                    ",
+        "                                                    .                                               ",
+        "                                                                                                    ",
         "                                                ⠂                                                   ",
+        "                                                                                                    ",
         "                                                                                                    ",
         "                                                )    (><>                                           ",
         "                                                (   )><>                                            ",
@@ -146,7 +158,8 @@ fn game_snapshot_100x30() {
         "────────────────────────────────────────────────────────────────────────────────────────────────────",
         " [1] Algae 3/4  $141   [2] Plankton 2/3  $565   [3] Small fish 2/2  $1129   [4] Big fish 1/1  $4480 ",
         " $ 630  +210 collected                                                                              ",
-        " [1-4] buy   [q] quit                                                                               ",
+        " score 210   next reef at 12000                                                                     ",
+        " [1-4] buy   [n] new sea   [q] quit                                                                 ",
     ];
     assert_snapshot(&actual, &expected);
 }
@@ -162,8 +175,23 @@ fn palette_stays_in_indexed_256_space() {
     let in_space =
         |c: Option<Color>| matches!(c, None | Some(Color::Reset) | Some(Color::Indexed(_)));
 
-    // (label, terminal, w, h): the live scene at both sizes, plus the placement
-    // screen (run not started) which introduces its own marker/preview colors.
+    // A coral + kelp sea exercises every new reef color at once: coral and
+    // kelp rock bodies, both base-algae tints, a big fish and a dugong.
+    let reefs = State {
+        population: [4, 0, 0, 2],
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 30_000 * MICRO,
+        rocks: vec![Rock { kind: 1, slot: 1 }, Rock { kind: 2, slot: 3 }],
+        tick_count: 300,
+        started: true,
+    };
+
+    // (label, terminal, w, h): the live scene at both sizes, the placement
+    // screen (run not started) with its own marker/preview colors, and a
+    // coral+kelp sea that brings in the reef-variant palette.
     let scenes = [
         ("wallpaper", rendered_terminal(40, 12), 40u16, 12u16),
         ("game", rendered_terminal(100, 30), 100, 30),
@@ -173,6 +201,7 @@ fn palette_stays_in_indexed_256_space() {
             100,
             30,
         ),
+        ("reefs", rendered_terminal_with(reefs, 100, 30), 100, 30),
     ];
     for (label, terminal, w, h) in scenes {
         let buffer = terminal.backend().buffer();
@@ -203,13 +232,17 @@ fn buy_highlight_needs_money_and_housing() {
         nutrient: 0,
         collectable: 0,
         currency: 200 * MICRO,
+        score: 0,
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
+        started: true,
     };
     let terminal = rendered_terminal_with(state, 100, 30);
     let buffer = terminal.backend().buffer();
 
-    let species_row = 27u16;
+    // The species segments sit on the second HUD row (rule, species, money,
+    // score, hint): area.top() + tank.height + 1 = 30 - HUD_HEIGHT(5) + 1.
+    let species_row = 26u16;
     let row: String = (0..100)
         .map(|x| buffer.cell((x, species_row)).expect("cell").symbol())
         .collect();
@@ -235,9 +268,11 @@ fn buy_highlight_needs_money_and_housing() {
     );
 }
 
-/// The one-time placement screen (run not yet started): an empty tank with the
-/// floor slots marked and a dim rock preview at the default cursor, plus the
-/// move/place hint — the only screen with text that isn't the HUD.
+/// The placement screen (run not yet started): an empty tank with the kind
+/// panel (list, budget, next unlock), the floor slots marked, and a dim ghost
+/// in the selected kind's shape at the default cursor, plus the full key hint.
+/// Unlike the wallpaper, this is the game layer, so it may show numbers (the
+/// budget and unlock thresholds are load-bearing here).
 #[test]
 fn placement_snapshot_100x30() {
     let terminal = rendered_terminal_with(State::new(), 100, 30);
@@ -245,9 +280,9 @@ fn placement_snapshot_100x30() {
     let expected = [
         " ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~  ",
         " place your reef                                                                                    ",
-        "                                                                                                    ",
-        "                                                                                                    ",
-        "                                                                                                    ",
+        " rock(1)                                                                                            ",
+        " budget 0/1                                                                                         ",
+        " coral unlocks at 12000                                                                             ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
@@ -272,15 +307,9 @@ fn placement_snapshot_100x30() {
         "                                                                                                    ",
         "                                                                                                    ",
         "          ▁                   ▁                  ▄█▄                  ▁                   ▁         ",
-        " [<-/->] move   [enter] place                                                                       ",
+        " [</>] move  [^/v] kind  [enter] place  [bksp] remove  [s] start                                    ",
     ];
     assert_snapshot(&actual, &expected);
-
-    let joined = actual.join("");
-    assert!(
-        !joined.chars().any(|c| c.is_ascii_digit()),
-        "the placement screen shows no digit"
-    );
 }
 
 /// Feedback (a): a bought individual must show in the picture. With one rock
@@ -298,8 +327,10 @@ fn algae_population_shows_one_column_each() {
         nutrient: 0,
         collectable: 0,
         currency: 0,
+        score: 0,
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
+        started: true,
     };
     let (w, h) = (40u16, 12u16);
     let terminal = rendered_terminal_with(state, w, h);
@@ -335,8 +366,10 @@ fn algae_visible_at_edge_slots_in_narrow_panes() {
                 nutrient: 0,
                 collectable: 0,
                 currency: 0,
+                score: 0,
                 rocks: vec![Rock { kind: 0, slot }],
                 tick_count: 30,
+                started: true,
             };
             let h = 12u16;
             let terminal = rendered_terminal_with(state, w, h);
@@ -376,8 +409,10 @@ fn plankton_occupy_distinct_cells() {
         nutrient: 0,
         collectable: 0,
         currency: 0,
+        score: 0,
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
+        started: true,
     };
     let mut columns_seen: HashSet<u16> = HashSet::new();
     for frame in [0u64, 3, 8, 17, 50, 100] {
@@ -411,8 +446,10 @@ fn fish_keep_distinct_lanes() {
         nutrient: 0,
         collectable: 0,
         currency: 0,
+        score: 0,
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
+        started: true,
     };
     for frame in [0u64, 8, 17, 50, 123] {
         let terminal = rendered_at_frame(state.clone(), 100, 30, frame);
@@ -463,8 +500,10 @@ fn fish_patrol_follows_its_rock() {
             nutrient: 0,
             collectable: 0,
             currency: 0,
+            score: 0,
             rocks: vec![Rock { kind: 0, slot }],
             tick_count: 30,
+            started: true,
         };
         let terminal = rendered_at_frame(state, 100, 30, frame);
         let buffer = terminal.backend().buffer();
@@ -508,4 +547,353 @@ fn pre_run_wallpaper_is_an_empty_sea() {
         "an empty tank shows only water and waves, got: {joined:?}"
     );
     assert!(joined.contains('~'), "the surface waves are still drawn");
+}
+
+/// The placement screen lists the unlocked kinds with their budget cost, the
+/// budget used out of its ceiling, and the next reef still to unlock. With
+/// score past coral (budget 2), rock and coral are selectable and kelp reads as
+/// the next goal; the selected kind is highlighted.
+#[test]
+fn placement_lists_unlocked_kinds_budget_and_next_unlock() {
+    use ratatui::style::Color;
+
+    let mut state = State::new();
+    state.score = 12_000 * MICRO; // rock + coral unlocked, kelp locked
+    let terminal = rendered_terminal_with(state, 100, 30);
+    let rows = rows_of(&terminal, 100, 30);
+    let joined = rows.join("\n");
+
+    assert!(
+        joined.contains("rock(1)"),
+        "rock listed with cost: {joined}"
+    );
+    assert!(joined.contains("coral(2)"), "coral listed with cost");
+    assert!(
+        !joined.contains("kelp(3)"),
+        "kelp is locked, so not in the selectable list"
+    );
+    assert!(
+        joined.contains("kelp unlocks at 30000"),
+        "the next reef reads as a goal"
+    );
+    assert!(joined.contains("budget 0/2"), "budget used/total reads");
+
+    // The selected kind (default 0 = rock) is highlighted in the buy-green.
+    let buffer = terminal.backend().buffer();
+    let kinds_row = 2u16; // area.top() + 2
+    let row: String = (0..100)
+        .map(|x| buffer.cell((x, kinds_row)).expect("cell").symbol())
+        .collect();
+    let rx = row.find("rock(1)").expect("rock segment") as u16;
+    assert_eq!(
+        buffer.cell((rx, kinds_row)).expect("cell").style().fg,
+        Some(Color::Indexed(114)),
+        "the selected kind is highlighted"
+    );
+}
+
+/// The HUD shows the lifetime score and, while a reef is still locked, the
+/// score threshold of the next one — the goal a new sea works toward. With
+/// every reef unlocked the goal drops and only the score remains.
+#[test]
+fn hud_shows_score_and_next_reef() {
+    // collectable is zeroed so entering the game layer does not fold surplus
+    // into the score under test.
+    let mut state = fixed_state();
+    state.score = 1_234 * MICRO;
+    state.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    assert!(joined.contains("score 1234"), "score reads: {joined}");
+    assert!(
+        joined.contains("next reef at 12000"),
+        "the next reef threshold reads"
+    );
+
+    // Crossing a threshold mid-run: the budget now exceeds what the reef
+    // spends, so the line names the unlocked kind and points at the new sea —
+    // the reason to rebuild must stay visible after the unlock.
+    let mut state = fixed_state();
+    state.score = 12_000 * MICRO; // coral unlocked, reef still spends 1 of 2
+    state.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("coral unlocked - [n] new sea"),
+        "an unlocked reef the run does not use is announced: {joined}"
+    );
+    assert!(
+        !joined.contains("next reef"),
+        "the rebuild nudge replaces the next-threshold goal"
+    );
+
+    // Every reef unlocked and the budget fully spent: nothing left to work
+    // toward or rebuild for — the score stands alone.
+    let mut state = fixed_state();
+    state.score = 40_000 * MICRO; // past every unlock
+    state.rocks = vec![Rock { kind: 2, slot: 2 }]; // kelp spends the full budget 3
+    state.tick_count = 300;
+    state.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("score 40000"),
+        "score reads when all unlocked"
+    );
+    assert!(
+        !joined.contains("next reef") && !joined.contains("unlocked -"),
+        "no goal and no nudge once everything is unlocked and spent"
+    );
+}
+
+/// The HUD hint offers the new-sea action alongside buy and quit.
+#[test]
+fn hud_hint_includes_new_sea() {
+    let mut state = fixed_state();
+    state.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    assert!(joined.contains("[n] new sea"), "the hint offers new sea");
+    assert!(joined.contains("[1-4] buy"), "the buy hint stays");
+    assert!(joined.contains("[q] quit"), "the quit hint stays");
+}
+
+/// While a new-sea confirmation is armed the HUD shows the prompt in place of
+/// the key hint, so the yes/no choice reads where the keys were.
+#[test]
+fn new_sea_prompt_shows_when_pending() {
+    let mut state = fixed_state();
+    state.collectable = 0;
+    let mut app = App::new(state, Params::default());
+    app.frame = 8;
+    app.new_sea_pending = true;
+    let terminal = rendered_terminal_of(app, 100, 30);
+    let joined = rows_of(&terminal, 100, 30).join("\n");
+
+    assert!(
+        joined.contains("start a new sea?"),
+        "the confirmation prompt shows: {joined}"
+    );
+    assert!(joined.contains("[y] yes"), "y confirms");
+    assert!(
+        !joined.contains("[1-4] buy"),
+        "the key hint yields to the prompt"
+    );
+}
+
+/// Composing a coral reef (run not started): the placed coral shows its real
+/// body color, and the cursor ghost shows the selected kind's shape in the dim
+/// preview tone — the ghost's shape carries the kind, since its color does not.
+#[test]
+fn placement_ghost_and_placed_rock_take_the_kind() {
+    use ratatui::style::Color;
+
+    let mut state = State::new();
+    state.score = 12_000 * MICRO; // coral unlocked, budget 2
+    state.rocks = vec![Rock { kind: 1, slot: 0 }];
+    let mut app = App::new(state, Params::default());
+    app.placement_kind = 1; // coral selected
+    app.placement_cursor = 4; // ghost on an empty slot
+    let terminal = rendered_terminal_of(app, 100, 30);
+    let buffer = terminal.backend().buffer();
+
+    // The placed coral is drawn in its real body color (174), not rock gray.
+    let placed_coral = (0..30u16)
+        .flat_map(|y| (0..100u16).map(move |x| (x, y)))
+        .any(|(x, y)| buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(174)));
+    assert!(placed_coral, "the placed coral shows its real color");
+
+    // The cursor ghost is the coral shape (a branch glyph) in the dim preview
+    // tone (240), so the shape tells the player which kind will drop.
+    let ghost = (0..30u16)
+        .flat_map(|y| (0..100u16).map(move |x| (x, y)))
+        .any(|(x, y)| {
+            let cell = buffer.cell((x, y)).expect("cell");
+            (cell.symbol() == "╱" || cell.symbol() == "╲")
+                && cell.style().fg == Some(Color::Indexed(240))
+        });
+    assert!(
+        ghost,
+        "the cursor ghost takes the selected kind's shape, dimmed"
+    );
+}
+
+/// Placed reefs must stay whole on the placement screen: the free-slot markers
+/// may not punch through a placed body, and a cursor over a placed rock grabs
+/// it (relit in the cursor tone, keeping its own shape) instead of painting the
+/// selected kind's ghost over it.
+#[test]
+fn placed_reefs_stay_whole_during_placement() {
+    use ratatui::style::Color;
+
+    // A rock placed at slot 0 (center column 10, floor row 28 at 100x30) with
+    // the cursor elsewhere: the body keeps its center cell.
+    let mut state = State::new();
+    state.score = 12_000 * MICRO; // budget 2: placement continues after one rock
+    state.rocks = vec![Rock { kind: 0, slot: 0 }];
+    let terminal = rendered_terminal_with(state.clone(), 100, 30);
+    let buffer = terminal.backend().buffer();
+    let center = buffer.cell((10, 28)).expect("cell");
+    assert_eq!(
+        center.symbol(),
+        "█",
+        "a slot marker must not punch the body"
+    );
+    assert_eq!(
+        center.style().fg,
+        Some(Color::Indexed(245)),
+        "rock gray body"
+    );
+
+    // Cursor on the occupied slot, with coral selected: the rock is grabbed —
+    // relit, its own shape — not repainted as a coral ghost.
+    let mut app = App::new(state, Params::default());
+    app.placement_cursor = 0;
+    app.placement_kind = 1;
+    let terminal = rendered_terminal_of(app, 100, 30);
+    let buffer = terminal.backend().buffer();
+    let center = buffer.cell((10, 28)).expect("cell");
+    assert_eq!(center.symbol(), "█", "the grabbed rock keeps its shape");
+    assert_eq!(
+        center.style().fg,
+        Some(Color::Indexed(222)),
+        "the grabbed rock is relit in the cursor tone"
+    );
+    let side = buffer.cell((9, 28)).expect("cell");
+    assert_eq!(side.symbol(), "▄", "no coral ghost over the placed rock");
+}
+
+/// A coral and a kelp reef side by side each render in their own colors — rock
+/// body, base-algae tint, and apex individual — so a player tells reefs apart
+/// by color, not just position (game-design's "different sea" payoff).
+#[test]
+fn reef_variants_render_distinct_colors() {
+    use ratatui::style::Color;
+
+    let state = State {
+        population: [4, 0, 0, 2],
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 30_000 * MICRO,
+        rocks: vec![Rock { kind: 1, slot: 1 }, Rock { kind: 2, slot: 3 }],
+        tick_count: 300,
+        started: true,
+    };
+    let terminal = rendered_terminal_with(state, 100, 30);
+    let buffer = terminal.backend().buffer();
+    let present = |c: Color| {
+        (0..30u16)
+            .flat_map(|y| (0..100u16).map(move |x| (x, y)))
+            .any(|(x, y)| buffer.cell((x, y)).expect("cell").style().fg == Some(c))
+    };
+    assert!(present(Color::Indexed(174)), "coral rock body shows");
+    assert!(present(Color::Indexed(58)), "kelp holdfast shows");
+    assert!(present(Color::Indexed(37)), "coral base algae shows");
+    assert!(present(Color::Indexed(70)), "kelp fronds show");
+    assert!(present(Color::Indexed(180)), "the dugong shows over kelp");
+    assert!(present(Color::Indexed(209)), "a big fish shows over coral");
+}
+
+/// The apex individual takes on its host reef's character: over kelp it is a
+/// dugong (its own tan color, fully drawn at 6 cells), never a plain big fish.
+/// The kelp base layer shows its own frond color. A valid normal-play state:
+/// kelp unlocked (score >= 30000), budget spent (cost 3 <= budget 3), housing
+/// emerged (tick_count >= kelp delay 300), the one big-fish slot filled.
+#[test]
+fn kelp_sea_shows_dugong() {
+    use ratatui::style::Color;
+
+    let state = State {
+        population: [2, 2, 1, 1],
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 30_000 * MICRO,
+        rocks: vec![Rock { kind: 2, slot: 2 }],
+        tick_count: 300,
+        started: true,
+    };
+    let terminal = rendered_terminal_with(state, 100, 30);
+    let buffer = terminal.backend().buffer();
+
+    let count = |c: Color| -> usize {
+        (0..30u16)
+            .flat_map(|y| (0..100u16).map(move |x| (x, y)))
+            .filter(|&(x, y)| buffer.cell((x, y)).expect("cell").style().fg == Some(c))
+            .count()
+    };
+    assert_eq!(
+        count(Color::Indexed(180)),
+        6,
+        "the dugong shows fully (6 cells)"
+    );
+    assert_eq!(
+        count(Color::Indexed(209)),
+        0,
+        "no plain big fish over a kelp reef"
+    );
+    assert!(
+        count(Color::Indexed(70)) > 0,
+        "kelp fronds show their color"
+    );
+}
+
+/// The thin side pane is the tank's home, so the dugong (6 cells) must still
+/// draw fully there — even at an edge slot, where the patrol window would run
+/// off-pane without the clamp. Across a frame sweep all 6 cells stay on-screen.
+#[test]
+fn dugong_fully_drawn_in_narrow_pane() {
+    use ratatui::style::Color;
+
+    let state = State {
+        population: [0, 0, 0, 1],
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 30_000 * MICRO,
+        rocks: vec![Rock { kind: 2, slot: 4 }], // edge slot: worst case for the clamp
+        tick_count: 300,
+        started: true,
+    };
+    for frame in [0u64, 5, 8, 20, 50, 100] {
+        let terminal = rendered_at_frame(state.clone(), 40, 12, frame);
+        let buffer = terminal.backend().buffer();
+        let cells = (0..12u16)
+            .flat_map(|y| (0..40u16).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(180))
+            })
+            .count();
+        assert_eq!(
+            cells, 6,
+            "the dugong stays fully drawn at 40 wide, frame {frame}"
+        );
+    }
+}
+
+/// The game layer's minimum size (GAME_MIN_WIDTH x GAME_MIN_HEIGHT) must not
+/// break: every HUD and placement row stays within the pane (set_stringn
+/// clamps), and the new rows are present.
+#[test]
+fn min_game_size_80x20_renders() {
+    let mut state = fixed_state();
+    state.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(state, 80, 20), 80, 20).join("\n");
+    assert!(joined.contains("score"), "the HUD shows score at min size");
+    assert!(
+        joined.contains("[n] new sea"),
+        "the HUD hint fits at min size"
+    );
+
+    let mut placement = State::new();
+    placement.score = 30_000 * MICRO; // every kind unlocked
+    let joined = rows_of(&rendered_terminal_with(placement, 80, 20), 80, 20).join("\n");
+    assert!(
+        joined.contains("budget"),
+        "the placement budget fits at min size"
+    );
+    assert!(
+        joined.contains("[enter] place"),
+        "the placement hint fits at min size"
+    );
 }

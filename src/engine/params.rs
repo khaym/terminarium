@@ -40,13 +40,18 @@ impl Ratio {
     }
 }
 
-/// A rock kind: what it costs to place (budget, not currency), the detritus it
-/// sheds per tick, how long before its housing comes online, and how many of
-/// each species it can house.
+/// A rock kind: its name, what it costs to place (budget, not currency), the
+/// score that unlocks it, the detritus it sheds per tick, how long before its
+/// housing comes online, and how many of each species it can house.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RockKind {
+    /// Display name (also the identity in the placement UI).
+    pub name: &'static str,
     /// Placement budget this kind consumes (an allocation, never currency).
     pub cost: u32,
+    /// Score at which this kind unlocks. A kind is placeable once
+    /// `score >= unlock`; unlock is a pure derivation of score, not state.
+    pub unlock: u128,
     /// Detritus shed per tick. Effective from placement — the emergence delay
     /// gates housing only, never output (the run's only income until life is
     /// bought; the seed grant is a one-time boost, not income).
@@ -75,15 +80,34 @@ pub struct Params {
     pub base_cost: [u128; SPECIES],
     /// Cost multiplier per owned unit.
     pub cost_growth: Ratio,
-    /// Rock kinds available to place. The first run offers only the base rock.
+    /// Rock kinds available to place, ordered by unlock score. Higher score
+    /// unlocks later kinds.
     pub rock_kinds: Vec<RockKind>,
-    /// Placement budget available at the start of a run (allocation type).
-    pub placement_budget: u32,
-    /// Currency granted once, when the run's first rock is placed, so the first
-    /// algae is reachable within a single peek rather than ~48s of rock output.
+    /// Placement budget schedule: `(score threshold, budget)` pairs in
+    /// ascending threshold order. The budget available at a score is the one
+    /// from the highest threshold at or below it (see `Params::budget`). Budget
+    /// is an allocation, spent every run start up to the unlocked ceiling.
+    pub budget_steps: Vec<(u128, u32)>,
+    /// Currency granted once, at run start (`start_run`), so the first algae is
+    /// reachable within a single peek rather than ~48s of rock output.
     /// Deliberately short of the first algae's cost — the player still watches
     /// the rock→sediment→collect→buy causal chain close over a few seconds.
     pub seed_currency: u128,
+}
+
+impl Params {
+    /// Placement budget unlocked at `score`: the budget of the highest step
+    /// whose threshold is at or below the score. Budgets rise with their
+    /// thresholds, so the highest qualifying step also carries the largest
+    /// budget.
+    pub fn budget(&self, score: u128) -> u32 {
+        self.budget_steps
+            .iter()
+            .filter(|&&(threshold, _)| threshold <= score)
+            .map(|&(_, budget)| budget)
+            .max()
+            .unwrap_or(0)
+    }
 }
 
 impl Default for Params {
@@ -97,13 +121,33 @@ impl Default for Params {
             recycle: Ratio::new(3, 10),
             base_cost: [100 * MICRO, 450 * MICRO, 900 * MICRO, 4_000 * MICRO],
             cost_growth: Ratio::new(112, 100),
-            rock_kinds: vec![RockKind {
-                cost: 1,
-                output: 3 * MICRO,
-                delay: 0,
-                capacity: [4, 3, 2, 1],
-            }],
-            placement_budget: 1,
+            rock_kinds: vec![
+                RockKind {
+                    name: "rock",
+                    cost: 1,
+                    unlock: 0,
+                    output: 3 * MICRO,
+                    delay: 0,
+                    capacity: [4, 3, 2, 1],
+                },
+                RockKind {
+                    name: "coral",
+                    cost: 2,
+                    unlock: 12_000 * MICRO,
+                    output: 12 * MICRO,
+                    delay: 120,
+                    capacity: [2, 6, 5, 3],
+                },
+                RockKind {
+                    name: "kelp",
+                    cost: 3,
+                    unlock: 30_000 * MICRO,
+                    output: 12 * MICRO,
+                    delay: 300,
+                    capacity: [9, 5, 2, 1],
+                },
+            ],
+            budget_steps: vec![(0, 1), (12_000 * MICRO, 2), (30_000 * MICRO, 3)],
             seed_currency: 80 * MICRO,
         }
     }
