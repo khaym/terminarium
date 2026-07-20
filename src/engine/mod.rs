@@ -3,5 +3,5 @@
 mod params;
 mod state;
 
-pub use params::{Params, Ratio, Species, MICRO, SPECIES};
-pub use state::State;
+pub use params::{Params, Ratio, RockKind, Species, MICRO, SLOTS, SPECIES};
+pub use state::{Rock, State};

@@ -4,7 +4,7 @@
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::engine::{Params, Species, State};
+use crate::engine::{Params, Species, State, SLOTS};
 
 /// Below either threshold the pane is a wallpaper; at or above both it is the
 /// game layer. Sized so a tmux side pane stays decorative and a zoomed pane
@@ -37,6 +37,9 @@ pub struct App {
     pub frame: u64,
     /// Collected amount to flash on the HUD, with frames left to live.
     pub flash: Option<(u128, u8)>,
+    /// Floor slot the placement cursor sits on, in `0..SLOTS`. Only meaningful
+    /// during the placement phase (game layer, run not started).
+    pub placement_cursor: u8,
     pub should_quit: bool,
     tick_acc_ms: u64,
 }
@@ -49,6 +52,8 @@ impl App {
             layer: Layer::Wallpaper,
             frame: 0,
             flash: None,
+            // Start mid-floor so the first move goes either way.
+            placement_cursor: SLOTS / 2,
             should_quit: false,
             tick_acc_ms: 0,
         }
@@ -77,12 +82,16 @@ impl App {
             self.should_quit = true;
             return;
         }
-        // A wallpaper accepts no game input.
+        // A wallpaper accepts no game input — neither placement nor buying.
         if self.layer != Layer::Game {
             return;
         }
+        // Before the first rock lands the game layer is the placement screen.
+        if !self.state.run_started() {
+            self.handle_placement(code);
+            return;
+        }
         match code {
-            KeyCode::Char('f') => self.state.feed(&self.params),
             KeyCode::Char('1') => {
                 self.state.buy(Species::Algae, &self.params);
             }
@@ -100,20 +109,44 @@ impl App {
         self.drain_surplus();
     }
 
+    /// Placement-phase input: walk the cursor across the floor slots (wrapping
+    /// at the ends) and drop the base rock, which starts the run.
+    fn handle_placement(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.placement_cursor = (self.placement_cursor + SLOTS - 1) % SLOTS;
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.placement_cursor = (self.placement_cursor + 1) % SLOTS;
+            }
+            KeyCode::Enter => {
+                self.state
+                    .place_rock(0, self.placement_cursor, &self.params);
+            }
+            _ => {}
+        }
+    }
+
     /// Wall-clock milliseconds → whole engine ticks (1 tick = 1 s); the
-    /// remainder stays accumulated so no time is lost between calls.
+    /// remainder stays accumulated so no time is lost between calls. The clock
+    /// only runs during a live run — before the first rock is placed there is
+    /// nothing to advance (mirroring the engine contract that the caller must
+    /// not `advance` pre-placement), so accumulated time and the run clock both
+    /// start fresh at placement.
     pub fn on_elapsed(&mut self, ms: u64) {
-        self.tick_acc_ms += ms;
-        while self.tick_acc_ms >= 1000 {
-            self.tick_acc_ms -= 1000;
-            self.state.tick(&self.params);
+        if self.state.run_started() {
+            self.tick_acc_ms += ms;
+            while self.tick_acc_ms >= 1000 {
+                self.tick_acc_ms -= 1000;
+                self.state.tick(&self.params);
+            }
         }
         self.drain_surplus();
     }
 
     /// On the game layer, surplus is collected as it appears — silently, so
-    /// feeding and production move the visible currency immediately. On the
-    /// wallpaper it accrues untouched (that pile is the peek reward).
+    /// production moves the visible currency immediately. On the wallpaper it
+    /// accrues untouched (that pile is the peek reward).
     fn drain_surplus(&mut self) {
         if self.layer == Layer::Game {
             self.state.collect();
@@ -193,28 +226,115 @@ mod tests {
 
     #[test]
     fn game_input_works_only_in_game_layer() {
+        let params = Params::default();
         let mut state = State::new();
+        // A placed rock gives algae housing, so the buy gate is capacity, not
+        // the missing placement UI (that lands in the next slice).
+        assert!(state.place_rock(0, 0, &params));
         state.currency = 1_000 * MICRO;
-        let mut app = app_with(state);
+        let mut app = App::new(state, params);
         let none = KeyModifiers::NONE;
 
-        // Wallpaper: feed and buy are ignored.
+        // Wallpaper: buy is ignored.
         app.on_resize(40, 12);
-        app.on_key(KeyCode::Char('f'), none);
         app.on_key(KeyCode::Char('1'), none);
-        assert_eq!(app.state.biomass(), 0);
         assert_eq!(app.state.population[0], 0);
 
-        // Game layer: feeding moves the visible currency immediately (the
-        // non-recycled share is collected on the spot).
+        // Game layer: buying works.
         app.on_resize(100, 30);
-        app.on_key(KeyCode::Char('f'), none);
-        let fed = app.params.feed_amount;
-        let recycled = app.params.recycle.apply(fed);
-        assert_eq!(app.state.nutrient, recycled);
-        assert_eq!(app.state.currency, 1_000 * MICRO + (fed - recycled));
         app.on_key(KeyCode::Char('1'), none);
         assert_eq!(app.state.population[0], 1);
+    }
+
+    #[test]
+    fn no_time_flows_before_the_run_starts() {
+        // On the placement screen (game layer, no rock yet) the clock must not
+        // run: ticking here would advance tick_count and slam the placement
+        // gate shut before the player ever places a rock.
+        let mut app = app_with(State::new());
+        app.on_resize(100, 30);
+        assert!(!app.state.run_started());
+
+        app.on_elapsed(10_000);
+        assert_eq!(
+            app.state.tick_count, 0,
+            "no rock means no run means no ticks"
+        );
+        assert!(!app.state.run_started());
+    }
+
+    #[test]
+    fn placement_cursor_moves_and_wraps() {
+        let mut app = app_with(State::new());
+        app.on_resize(100, 30);
+        let none = KeyModifiers::NONE;
+
+        // Default cursor sits mid-floor.
+        assert_eq!(app.placement_cursor, SLOTS / 2);
+        assert_eq!(app.placement_cursor, 2);
+
+        // Right (and l) walks up and wraps past the last slot.
+        app.on_key(KeyCode::Right, none);
+        assert_eq!(app.placement_cursor, 3);
+        app.on_key(KeyCode::Char('l'), none);
+        assert_eq!(app.placement_cursor, 4);
+        app.on_key(KeyCode::Right, none);
+        assert_eq!(
+            app.placement_cursor, 0,
+            "past the last slot wraps to the first"
+        );
+
+        // Left (and h) walks down and wraps past the first slot.
+        app.on_key(KeyCode::Left, none);
+        assert_eq!(
+            app.placement_cursor,
+            SLOTS - 1,
+            "before the first wraps to the last"
+        );
+        app.on_key(KeyCode::Char('h'), none);
+        assert_eq!(app.placement_cursor, 3);
+    }
+
+    #[test]
+    fn enter_places_the_cursor_rock_and_starts_the_run() {
+        let mut app = app_with(State::new());
+        app.on_resize(100, 30);
+        let none = KeyModifiers::NONE;
+        assert!(!app.state.run_started());
+
+        app.on_key(KeyCode::Right, none); // cursor 2 -> 3
+        app.on_key(KeyCode::Enter, none);
+
+        assert!(
+            app.state.run_started(),
+            "Enter drops the rock and begins the run"
+        );
+        assert_eq!(app.state.rocks.len(), 1);
+        assert_eq!(app.state.rocks[0].kind, 0);
+        assert_eq!(app.state.rocks[0].slot, 3);
+
+        // Once the run has started the clock runs again.
+        app.on_elapsed(3_000);
+        assert!(app.state.tick_count > 0, "time flows after placement");
+    }
+
+    #[test]
+    fn placement_input_is_ignored_on_the_wallpaper() {
+        let mut app = app_with(State::new());
+        app.on_resize(40, 12); // wallpaper: no game input at all
+        let none = KeyModifiers::NONE;
+        let start = app.placement_cursor;
+
+        app.on_key(KeyCode::Right, none);
+        assert_eq!(
+            app.placement_cursor, start,
+            "the wallpaper takes no placement input"
+        );
+        app.on_key(KeyCode::Enter, none);
+        assert!(
+            !app.state.run_started(),
+            "Enter on the wallpaper places nothing"
+        );
     }
 
     #[test]
@@ -233,6 +353,8 @@ mod tests {
     #[test]
     fn elapsed_milliseconds_accumulate_into_whole_ticks() {
         let mut state = State::new();
+        // A live run is the precondition for ticking; place a rock first.
+        assert!(state.place_rock(0, 0, &Params::default()));
         state.population[0] = 1;
         let mut app = app_with(state.clone());
 

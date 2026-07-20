@@ -5,9 +5,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::engine::{Params, State, SPECIES};
+use crate::engine::{Params, Rock, State, SLOTS, SPECIES};
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// Sanity bound on parsed populations. Legitimate play tops out near ~620 per
 /// species (the cost curve saturates u128 there), while HUD cost display is
@@ -44,16 +44,24 @@ pub fn serialize(state: &State, saved_at: u64) -> String {
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(",");
+    let rocks = state
+        .rocks
+        .iter()
+        .map(|r| format!("{}:{}", r.kind, r.slot))
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
         "v={VERSION}\nsaved_at={saved_at}\npopulation={populations}\npool={pools}\n\
-         nutrient={}\ncollectable={}\ncurrency={}\n",
-        state.nutrient, state.collectable, state.currency,
+         nutrient={}\ncollectable={}\ncurrency={}\nrocks={rocks}\nage={}\n",
+        state.nutrient, state.collectable, state.currency, state.tick_count,
     )
 }
 
 /// Strict parse: every key present exactly once with the right shape, or
-/// nothing — a half-read save must never masquerade as a valid one.
-pub fn parse(text: &str) -> Option<(State, u64)> {
+/// nothing — a half-read save must never masquerade as a valid one. Rock
+/// validity is checked against `params` so a hand-edited kind cannot index out
+/// of the rock table at load time.
+pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
     let mut version: Option<u32> = None;
     let mut saved_at: Option<u64> = None;
     let mut population: Option<[u32; SPECIES]> = None;
@@ -61,6 +69,8 @@ pub fn parse(text: &str) -> Option<(State, u64)> {
     let mut nutrient: Option<u128> = None;
     let mut collectable: Option<u128> = None;
     let mut currency: Option<u128> = None;
+    let mut rocks: Option<Vec<Rock>> = None;
+    let mut tick_count: Option<u64> = None;
 
     for line in text.lines() {
         let (key, value) = line.split_once('=')?;
@@ -72,6 +82,8 @@ pub fn parse(text: &str) -> Option<(State, u64)> {
             "nutrient" => set_once(&mut nutrient, value.parse().ok()?)?,
             "collectable" => set_once(&mut collectable, value.parse().ok()?)?,
             "currency" => set_once(&mut currency, value.parse().ok()?)?,
+            "rocks" => set_once(&mut rocks, parse_rocks(value, params)?)?,
+            "age" => set_once(&mut tick_count, value.parse().ok()?)?,
             _ => return None,
         }
     }
@@ -88,6 +100,8 @@ pub fn parse(text: &str) -> Option<(State, u64)> {
         nutrient: nutrient?,
         collectable: collectable?,
         currency: currency?,
+        rocks: rocks?,
+        tick_count: tick_count?,
     };
     Some((state, saved_at?))
 }
@@ -112,6 +126,32 @@ fn parse_array<T: std::str::FromStr + Copy + Default>(value: &str) -> Option<[T;
     Some(out)
 }
 
+/// `kind:slot,kind:slot,...`; empty value is an empty list. Rejects any rock a
+/// live run could not have produced: an out-of-range kind, a slot at or beyond
+/// `SLOTS`, a duplicated slot, or more rocks than there are slots.
+fn parse_rocks(value: &str, params: &Params) -> Option<Vec<Rock>> {
+    if value.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut rocks = Vec::new();
+    let mut used = [false; SLOTS as usize];
+    for part in value.split(',') {
+        let (kind, slot) = part.split_once(':')?;
+        let kind: usize = kind.parse().ok()?;
+        let slot: u8 = slot.parse().ok()?;
+        if kind >= params.rock_kinds.len() || slot >= SLOTS {
+            return None;
+        }
+        let seat = &mut used[usize::from(slot)];
+        if *seat {
+            return None; // a duplicated slot means the file is not ours
+        }
+        *seat = true;
+        rocks.push(Rock { kind, slot });
+    }
+    Some(rocks)
+}
+
 /// Write atomically (tmp + rename) so a crash mid-write cannot corrupt the
 /// previous save.
 pub fn store(path: &Path, state: &State, now: u64) -> io::Result<()> {
@@ -130,9 +170,13 @@ pub fn load(path: &Path, params: &Params, now: u64) -> State {
     let Ok(text) = fs::read_to_string(path) else {
         return State::new();
     };
-    match parse(&text) {
+    match parse(&text, params) {
         Some((mut state, saved_at)) => {
-            state.advance(now.saturating_sub(saved_at), params);
+            // Before the first rock the clock does not run, so an absence
+            // settles nothing (see State::run_started).
+            if state.run_started() {
+                state.advance(now.saturating_sub(saved_at), params);
+            }
             state
         }
         None => {
@@ -162,6 +206,8 @@ mod tests {
             nutrient: 1_234_567,
             collectable: 42 * MICRO,
             currency: 120 * MICRO + 1,
+            rocks: vec![Rock { kind: 0, slot: 0 }, Rock { kind: 0, slot: 2 }],
+            tick_count: 137,
         }
     }
 
@@ -182,7 +228,8 @@ mod tests {
     #[test]
     fn round_trip_is_exact() {
         let state = sample_state();
-        let (parsed, saved_at) = parse(&serialize(&state, 987_654_321)).expect("round trip");
+        let (parsed, saved_at) =
+            parse(&serialize(&state, 987_654_321), &Params::default()).expect("round trip");
         assert_eq!(parsed, state);
         assert_eq!(saved_at, 987_654_321);
     }
@@ -214,6 +261,20 @@ mod tests {
     }
 
     #[test]
+    fn pre_run_save_is_not_settled() {
+        let path = temp_save_path("prerun");
+        let params = Params::default();
+        // No rocks placed yet: the run has not started, so an absence must
+        // settle nothing even though this pool would otherwise decay away.
+        let mut state = State::new();
+        state.pool[0] = 10 * MICRO;
+        store(&path, &state, 1_000).expect("store");
+
+        assert_eq!(load(&path, &params, 1_000_000), state);
+        cleanup(&path);
+    }
+
+    #[test]
     fn missing_file_starts_fresh() {
         let path = temp_save_path("missing");
         assert_eq!(load(&path, &Params::default(), 42), State::new());
@@ -237,26 +298,50 @@ mod tests {
     #[test]
     fn duplicate_keys_are_rejected() {
         let good = serialize(&sample_state(), 1);
-        assert!(parse(&format!("{good}currency=999\n")).is_none());
+        assert!(parse(&format!("{good}currency=999\n"), &Params::default()).is_none());
     }
 
     #[test]
     fn absurd_population_is_rejected() {
+        let p = Params::default();
         let good = serialize(&sample_state(), 1);
         let hacked = good.replace("population=3,1,0,0", "population=3,1,0,4294967295");
-        assert!(parse(&hacked).is_none());
+        assert!(parse(&hacked, &p).is_none());
         let plausible = good.replace("population=3,1,0,0", "population=3,1,0,600");
-        assert!(parse(&plausible).is_some());
+        assert!(parse(&plausible, &p).is_some());
+    }
+
+    #[test]
+    fn tampered_rocks_are_rejected() {
+        let p = Params::default();
+        let good = serialize(&sample_state(), 1);
+        assert!(parse(&good, &p).is_some());
+        // Kind out of range (the default table has only kind 0).
+        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=1:0,0:2"), &p).is_none());
+        // Slot at or beyond SLOTS.
+        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=0:0,0:5"), &p).is_none());
+        // Duplicated slot.
+        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=0:0,0:0"), &p).is_none());
+        // Malformed pair (missing the kind:slot separator).
+        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=00,0:2"), &p).is_none());
+        // An empty rock list is valid (a save from before the first placement).
+        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks="), &p).is_some());
     }
 
     #[test]
     fn unknown_key_or_wrong_shape_is_rejected() {
+        let p = Params::default();
         let good = serialize(&sample_state(), 1);
-        assert!(parse(&good).is_some());
-        assert!(parse(&good.replace("v=1", "v=2")).is_none());
-        assert!(parse(&format!("{good}extra=1\n")).is_none());
-        assert!(parse(&good.replace("population=3,1,0,0", "population=3,1,0")).is_none());
-        assert!(parse(&good.replace("population=3,1,0,0", "population=3,1,0,0,9")).is_none());
-        assert!(parse("").is_none());
+        assert!(parse(&good, &p).is_some());
+        assert!(parse(&good.replace("v=2", "v=1"), &p).is_none());
+        assert!(parse(&format!("{good}extra=1\n"), &p).is_none());
+        assert!(parse(&good.replace("population=3,1,0,0", "population=3,1,0"), &p).is_none());
+        assert!(parse(
+            &good.replace("population=3,1,0,0", "population=3,1,0,0,9"),
+            &p
+        )
+        .is_none());
+        assert!(parse(&good.replace("age=137", "age=nan"), &p).is_none());
+        assert!(parse("", &p).is_none());
     }
 }

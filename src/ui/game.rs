@@ -1,5 +1,6 @@
 //! Game layer: the same tank plus a HUD. Numbers live here and only here —
-//! the wallpaper never shows them.
+//! the wallpaper never shows them. Before the run starts this layer is the
+//! placement screen instead: an empty tank the player seeds with one rock.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -7,7 +8,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 use super::wallpaper;
 use crate::app::App;
-use crate::engine::{Species, MICRO, SPECIES};
+use crate::engine::{Species, MICRO, SLOTS, SPECIES};
 
 const HUD_HEIGHT: u16 = 4;
 const LABELS: [&str; SPECIES] = ["Algae", "Plankton", "Small fish", "Big fish"];
@@ -23,13 +24,25 @@ const TEXT: Color = Color::Indexed(252);
 const MONEY: Color = Color::Indexed(222);
 const FLASH: Color = Color::Indexed(114);
 const AFFORDABLE: Color = Color::Indexed(114);
+/// Species with no housing left: dimmed, so "no point buying" reads at a glance.
+const FULL: Color = Color::Indexed(240);
 const HINT: Color = Color::Indexed(245);
+/// Placement preview: dimmer than a placed rock, so the ghost reads as tentative.
+const PREVIEW: Color = Color::Indexed(240);
+/// Placement slot markers: fainter still than the preview.
+const MARKER: Color = Color::Indexed(236);
 
 pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
     if area.height <= HUD_HEIGHT + 2 || area.width < 20 {
         wallpaper::render(app, area, buf);
         return;
     }
+    // Before the first rock the game layer is the placement screen.
+    if !app.state.run_started() {
+        render_placement(app, area, buf);
+        return;
+    }
+
     let tank = Rect {
         height: area.height - HUD_HEIGHT,
         ..area
@@ -47,8 +60,9 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
         Style::new().fg(RULE),
     );
 
-    // One segment per species; the ones the player can afford right now are
-    // highlighted, so "can I buy?" is readable at a glance.
+    // One segment per species. The ones the player can act on are highlighted;
+    // a species with no housing left is dimmed and never lights up, so "can I
+    // buy?" is answered by both money and capacity, not money alone.
     let mut x = left;
     let right_edge = left + area.width.saturating_sub(2);
     for (i, &s) in ORDER.iter().enumerate() {
@@ -56,14 +70,20 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
             break;
         }
         let cost = app.state.next_cost(s, &app.params);
+        let cap = app.state.capacity(i, &app.params);
         let segment = format!(
-            "[{}] {} {}  ${}",
+            "[{}] {} {}/{}  ${}",
             i + 1,
             LABELS[i],
             app.state.population[i],
+            cap,
             fmt_cost(cost),
         );
-        let style = if app.state.currency >= cost {
+        let full = app.state.population[i] >= cap;
+        let affordable = !full && app.state.currency >= cost;
+        let style = if full {
+            Style::new().fg(FULL)
+        } else if affordable {
             Style::new().fg(AFFORDABLE).add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(TEXT)
@@ -93,8 +113,47 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
     buf.set_stringn(
         left,
         y + 3,
-        "[f] feed   [1-4] buy   [q] quit",
+        "[1-4] buy   [q] quit",
         width,
+        Style::new().fg(HINT),
+    );
+}
+
+/// The one-time placement screen: an empty tank with the floor slots marked and
+/// a dim rock preview at the cursor. The player moves it and presses enter to
+/// seed the run.
+fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
+    // Reserve the bottom row for the hint; the tank fills the rest.
+    let tank = Rect {
+        height: area.height - 1,
+        ..area
+    };
+    wallpaper::render(app, tank, buf);
+
+    buf.set_string(
+        area.left() + 1,
+        area.top() + 1,
+        "place your reef",
+        Style::new().fg(TEXT),
+    );
+
+    let floor_y = tank.bottom() - 1;
+    for slot in 0..SLOTS {
+        wallpaper::draw_slot_marker(
+            tank,
+            buf,
+            wallpaper::slot_center_x(tank, slot),
+            floor_y,
+            MARKER,
+        );
+    }
+    let cursor_x = wallpaper::slot_center_x(tank, app.placement_cursor);
+    wallpaper::draw_rock(tank, buf, cursor_x, floor_y, PREVIEW);
+
+    buf.set_string(
+        area.left() + 1,
+        area.bottom() - 1,
+        "[<-/->] move   [enter] place",
         Style::new().fg(HINT),
     );
 }
