@@ -5,8 +5,18 @@
 //!
 //! The placed rock is the scene's center of mass: sediment mounds under it,
 //! algae attach to its sides, detritus rains from its neighbourhood, and the
-//! smaller life gathers loosely around it. So the rock -> settle -> collect
-//! causality reads from position alone, without a word of text.
+//! swimming life patrols a bounded window around it (each rock its own reef).
+//! So the rock -> settle -> collect causality, and where the reef sits, read
+//! from position alone, without a word of text.
+//!
+//! Sprite positions are assigned from an individual's ordinal within its host
+//! rock, not drawn from an independent hash: distinct ordinals map to distinct
+//! in-pane columns (algae, plankton) or lanes/phases (fish), so every bought
+//! individual shows wherever the pane has room, and no two of a kind within a
+//! rock's colony share a cell. (Colonies on different rocks can still cross —
+//! the first run places a single rock; multi-rock spacing is a later concern.)
+//! The `mix()` hash is left only for freedoms that cannot cause overlap (frond
+//! height and sway, plankton drift, patrol phase).
 //!
 //! Character set and palette follow work/render-observations.md: layout uses
 //! ASCII + box-drawing + block + braille only, and colors stay in the
@@ -18,7 +28,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use crate::app::App;
-use crate::engine::{MICRO, SLOTS};
+use crate::engine::{Rock, MICRO, SLOTS};
 
 const WATER: Color = Color::Indexed(17);
 const SURFACE: Color = Color::Indexed(31);
@@ -40,6 +50,11 @@ const MAX_ALGAE: u64 = 12;
 const MAX_PLANKTON: u64 = 14;
 const MAX_SMALL_FISH: u64 = 8;
 const MAX_BIG_FISH: u64 = 4;
+
+/// Patrol radius (cells either side of the host rock) by fish size. Small fish
+/// stay tight to the reef; big fish sweep a wider, statelier beat.
+const SMALL_RADIUS: i64 = 5;
+const BIG_RADIUS: i64 = 10;
 
 /// Look of the base species (algae) for a given rock kind. Structured as a
 /// table so a new rock kind's variant is added as data, not code — the first
@@ -76,7 +91,7 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
     draw_algae(app, area, buf, frame);
     draw_plankton(app, area, buf, frame, w, h);
     draw_detritus(app, area, buf, frame, w, h);
-    draw_fish(app, area, buf, frame, w, h);
+    draw_fish(app, area, buf, frame, h);
 }
 
 fn fill_water(area: Rect, buf: &mut Buffer, frame: u64) {
@@ -182,24 +197,29 @@ fn draw_sediment(app: &App, area: Rect, buf: &mut Buffer) {
 }
 
 /// Algae attach to the sides of their host rock (never dead-center, so the rock
-/// still reads), fanning out with a deterministic spread. The glyph and color
-/// come from the rock kind's variant table.
+/// still reads), each frond in its own in-pane flank column. The glyph and
+/// color come from the rock kind's variant table.
 fn draw_algae(app: &App, area: Rect, buf: &mut Buffer, frame: u64) {
     if app.state.rocks.is_empty() {
         return;
     }
+    let n = app.state.rocks.len() as u64;
     let count = u64::from(app.state.population[0])
         .min(MAX_ALGAE)
         .min(u64::from(area.width) / 4);
     let floor = area.bottom() - 1;
     for i in 0..count {
-        let rock = &app.state.rocks[(i as usize) % app.state.rocks.len()];
+        let rock = &app.state.rocks[(i % n) as usize];
+        let ordinal = i / n; // this rock's k-th frond
         let variant = algae_variant(rock.kind);
         let center = slot_center_x(area, rock.slot);
-        // Flank the rock body (which spans center +-1), so the reef stays legible.
-        let mag = 2 + (mix(i, 7) % 3) as i64; // 2..=4 cells off the rock
-        let sign = if i % 2 == 0 { 1 } else { -1 };
-        let x = i64::from(center) + sign * mag;
+        // One in-pane flank column per frond; injective in the ordinal, so N
+        // fronds show as N columns wherever the pane has room. `None` means no
+        // usable column left (a pane too narrow to hold another).
+        let Some(x) = colony_column(area, i64::from(center), ordinal) else {
+            continue;
+        };
+        // Height and sway are collision-free freedom, so they stay hashed.
         let height = (2 + mix(i, 3) % 3).min(u64::from(area.height) - 1) as u16;
         for dy in 0..height {
             let y = floor.saturating_sub(dy);
@@ -220,21 +240,27 @@ fn draw_algae(app: &App, area: Rect, buf: &mut Buffer, frame: u64) {
     }
 }
 
-/// Plankton gather loosely around the reef — biased toward a rock, not pinned
-/// to it, so the drift still reads as life rather than a fixed cluster.
-fn draw_plankton(app: &App, area: Rect, buf: &mut Buffer, frame: u64, w: u64, h: u64) {
+/// Plankton gather around the reef, each in its own in-pane column fanned out
+/// from a rock and drifting vertically. Distinct columns mean two plankton on a
+/// rock never share a cell at any frame, yet the drift still reads as life, not
+/// a fixed cluster.
+fn draw_plankton(app: &App, area: Rect, buf: &mut Buffer, frame: u64, _w: u64, h: u64) {
     const DOTS: [&str; 4] = ["⠁", "⠂", "⠄", "⠈"];
     if app.state.rocks.is_empty() {
         return;
     }
+    let n = app.state.rocks.len() as u64;
     let count = u64::from(app.state.population[1]).min(MAX_PLANKTON);
     let lane = (h - 2).max(1);
-    let spread = (w / 4).max(1);
     for i in 0..count {
-        let rock = &app.state.rocks[(i as usize) % app.state.rocks.len()];
+        let rock = &app.state.rocks[(i % n) as usize];
+        let ordinal = i / n;
         let center = slot_center_x(area, rock.slot);
-        let offset = (mix(i, 11) % (2 * spread + 1)) as i64 - spread as i64;
-        let x = i64::from(center) + offset;
+        // One in-pane column per plankton (fan out from the rock).
+        let Some(x) = colony_column(area, i64::from(center), ordinal) else {
+            continue;
+        };
+        // Vertical drift is the collision-free freedom, so it stays hashed.
         let y = area.top() + 1 + ((mix(i, 13) + frame / 3) % lane) as u16;
         put(
             buf,
@@ -269,72 +295,114 @@ fn draw_detritus(app: &App, area: Rect, buf: &mut Buffer, frame: u64, _w: u64, h
     }
 }
 
-fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, w: u64, h: u64) {
+fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64) {
+    let rocks = &app.state.rocks;
+    if rocks.is_empty() {
+        return;
+    }
+    let n = rocks.len() as u64;
     let small = u64::from(app.state.population[2]).min(MAX_SMALL_FISH);
     let big = u64::from(app.state.population[3]).min(MAX_BIG_FISH);
-    // Small fish keep to the lower lanes near the reef; big fish roam freely.
+    // Small fish patrol a tight window low near their reef; big fish sweep a
+    // wider window and range higher — each bounded to its assigned rock.
     for i in 0..small {
-        swim(area, buf, frame, w, h, i, "><>", "<><", 1, FISH, true);
-    }
-    for i in 0..big {
-        swim(
+        let rock = &rocks[(i % n) as usize];
+        patrol(
             area,
             buf,
             frame,
-            w,
             h,
-            i + 100,
+            rock,
+            i / n,
+            "><>",
+            "<><",
+            1,
+            SMALL_RADIUS,
+            FISH,
+            true,
+        );
+    }
+    for i in 0..big {
+        let rock = &rocks[(i % n) as usize];
+        patrol(
+            area,
+            buf,
+            frame,
+            h,
+            rock,
+            i / n,
             "><)))>",
             "<(((><",
             2,
+            BIG_RADIUS,
             BIG_FISH,
             false,
         );
     }
 }
 
-/// One fish on its own lane, cycling across the tank. It swims fully inside
-/// or not at all (no partial clipping); leaving one edge it later re-enters,
-/// reading as "swam away, came back". `reef_bias` folds the lane into the
-/// lower half so smaller fish keep near the reef.
+/// One fish on a bounded patrol around its host rock: it glides right to the
+/// window edge, then back left, staying within the rock center ± the species
+/// radius. The window is clamped so the whole glyph fits, so the fish is always
+/// drawn fully — never partially clipped. `reef_bias` folds the lane into the
+/// lower half so smaller fish keep near the reef. `ordinal` (this rock's k-th
+/// fish of its size) sets a distinct lane and a distinct patrol phase, so two
+/// fish of a kind on one rock never share a cell.
 #[allow(clippy::too_many_arguments)]
-fn swim(
+fn patrol(
     area: Rect,
     buf: &mut Buffer,
     frame: u64,
-    w: u64,
     h: u64,
-    id: u64,
+    rock: &Rock,
+    ordinal: u64,
     right_glyph: &str,
     left_glyph: &str,
     slowdown: u64,
+    radius: i64,
     color: Color,
     reef_bias: bool,
 ) {
-    let len = right_glyph.len() as u64;
-    if w <= len {
-        return;
+    let len = right_glyph.len() as i64;
+    let min_anchor = i64::from(area.left());
+    let max_anchor = i64::from(area.right()) - len; // last x where the whole glyph fits
+    if max_anchor < min_anchor {
+        return; // pane too narrow to show the fish fully
     }
-    let span = w + len * 2;
-    let pos = (mix(id, 17) + frame / slowdown) % span;
-    if pos + len > w {
-        return; // off-screen part of the cycle
+    // Patrol window: rock center ± radius, clamped so the glyph never clips.
+    let center = i64::from(slot_center_x(area, rock.slot));
+    let left = (center - radius).max(min_anchor);
+    let right = (center + radius).min(max_anchor);
+    if right < left {
+        return; // window falls off the fittable strip
     }
-    let lane = (h - 2).max(1);
-    let raw = mix(id, 19) % lane;
-    let row = if reef_bias {
-        lane.saturating_sub(1)
-            .saturating_sub(raw % (lane / 2).max(1))
+    let travel = right - left;
+    let (x, glyph) = if travel == 0 {
+        (left, right_glyph)
     } else {
-        raw
+        let period = (2 * travel) as u64;
+        // Phase offset per fish keeps same-rock fish out of lockstep, so even
+        // two sharing a lane never coincide every frame.
+        let t = ((frame / slowdown + ordinal) % period) as i64;
+        if t < travel {
+            (left + t, right_glyph) // gliding right
+        } else {
+            (left + 2 * travel - t, left_glyph) // gliding back left
+        }
+    };
+
+    // Lane by ordinal: distinct rows for same-rock, same-size fish so their
+    // glyphs never share a cell. Small fish fold into the lower lanes (near the
+    // reef); big fish range over the full height.
+    let lane = (h - 2).max(1);
+    let row = if reef_bias {
+        let lower = (lane / 2).max(1);
+        (lane - 1) - (ordinal % lower)
+    } else {
+        ordinal % lane
     };
     let y = area.top() + 1 + row as u16;
-    let (x, glyph) = if id.is_multiple_of(2) {
-        (area.left() + pos as u16, right_glyph)
-    } else {
-        (area.left() + (w - len - pos) as u16, left_glyph)
-    };
-    buf.set_string(x, y, glyph, Style::new().fg(color).bg(WATER));
+    buf.set_string(x as u16, y, glyph, Style::new().fg(color).bg(WATER));
 }
 
 /// Set one cell, clamped to `area` (out-of-range coordinates are dropped). Lets
@@ -350,6 +418,31 @@ fn put(buf: &mut Buffer, area: Rect, x: i64, y: u16, sym: &str, style: Style) {
         cell.set_symbol(sym);
         cell.set_style(style);
     }
+}
+
+/// Column for the `k`-th member of a rock's colony. Candidate columns fan out
+/// from the rock (nearest first, right then left: +2, -2, +3, -3, …), and only
+/// those on-screen and clear of the rock body (center ±1) are kept; the k-th
+/// kept column is the answer. Skipping off-pane candidates for in-pane ones is
+/// what lets N members show as N columns even in a thin edge pane. Injective in
+/// `k` within a rock. `None` when the pane has fewer than `k+1` usable columns.
+fn colony_column(area: Rect, center: i64, k: u64) -> Option<i64> {
+    let lo = i64::from(area.left());
+    let hi = i64::from(area.right()); // exclusive
+    let mut remaining = k;
+    // Any usable column is within `area.width` of the center, so that bounds the
+    // fan. Magnitude starts at 2, which is what excludes the rock body.
+    for mag in 2..=i64::from(area.width) {
+        for x in [center + mag, center - mag] {
+            if (lo..hi).contains(&x) {
+                if remaining == 0 {
+                    return Some(x);
+                }
+                remaining -= 1;
+            }
+        }
+    }
+    None
 }
 
 /// Deterministic position hash: the whole animation is a pure function of
