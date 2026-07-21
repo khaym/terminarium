@@ -6,7 +6,7 @@
 
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use tui_game::app::App;
+use tui_game::app::{App, Phase};
 use tui_game::engine::{Params, Rock, State, MICRO, SLOTS};
 use tui_game::ui;
 
@@ -51,6 +51,26 @@ fn rendered_at_frame(state: State, width: u16, height: u16, frame: u64) -> Termi
     let mut app = App::new(state, Params::default());
     app.on_resize(width, height);
     app.frame = frame;
+
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|f| ui::draw(&app, f)).expect("draw");
+    terminal
+}
+
+/// Render `state` at the given size, frame, and time-of-day phase — the phase is
+/// the extra render input the palette and any visitor keys off.
+fn rendered_phase_frame(
+    state: State,
+    width: u16,
+    height: u16,
+    frame: u64,
+    phase: Phase,
+) -> Terminal<TestBackend> {
+    let mut app = App::new(state, Params::default());
+    app.on_resize(width, height);
+    app.frame = frame;
+    app.phase = phase;
 
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("terminal");
@@ -895,5 +915,301 @@ fn min_game_size_80x20_renders() {
     assert!(
         joined.contains("[enter] place"),
         "the placement hint fits at min size"
+    );
+}
+
+/// Time of day recolors only the water and its surface glow. Each phase paints
+/// its confirmed indexed-256 pair (dawn 60/116, day 24/80, dusk 53/216, night
+/// 17/31, work/render-observations.md); the same scene is drawn under each. The
+/// sprite glyphs are identical across phases (only color moves), which is why
+/// this asserts colors, not rows.
+#[test]
+fn time_of_day_recolors_the_water_and_surface() {
+    use ratatui::style::Color;
+
+    // (phase, water bg, surface glow) — the four confirmed palettes.
+    let cases = [
+        (Phase::Dawn, 60u8, 116u8),
+        (Phase::Day, 24, 80),
+        (Phase::Dusk, 53, 216),
+        (Phase::Night, 17, 31),
+    ];
+    let (w, h) = (40u16, 12u16);
+    for (phase, water, surface) in cases {
+        // A plain sea (fixed scene, biomass below the whale, score below the
+        // anchor) so only water + waves + reef sprites paint.
+        let terminal = rendered_phase_frame(fixed_state(), w, h, 8, phase);
+        let buffer = terminal.backend().buffer();
+
+        let water_cells = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                buffer.cell((x, y)).expect("cell").style().bg == Some(Color::Indexed(water))
+            })
+            .count();
+        assert!(
+            water_cells > 0,
+            "{phase:?}: the water background must be indexed {water}"
+        );
+
+        // The surface waves carry the glow color for the phase.
+        let wave = (0..w)
+            .map(|x| buffer.cell((x, 0)).expect("cell"))
+            .find(|c| c.symbol() == "~")
+            .expect("a wave crest on the surface row");
+        assert_eq!(
+            wave.style().fg,
+            Some(Color::Indexed(surface)),
+            "{phase:?}: the surface glow must be indexed {surface}"
+        );
+    }
+}
+
+/// A state with high biomass but nothing else, so a rendered whale stands alone
+/// against the water. Rocks are empty, so every reef sprite (rock, algae,
+/// plankton, detritus, fish, sediment) skips; the whale keys off biomass, not
+/// the reef, so it still crosses.
+fn whale_only_sea() -> State {
+    State {
+        population: [0, 0, 0, 0],
+        pool: [0; 4],
+        // Nutrient alone clears the whale's biomass gate (400 units, default).
+        nutrient: 400 * MICRO,
+        collectable: 0,
+        currency: 0,
+        score: 0, // below the anchor unlock, so no anchor either
+        rocks: vec![],
+        tick_count: 0,
+        started: true,
+    }
+}
+
+/// A crossing frame: a whale glides across the sea, drawn in its pale blue-gray
+/// (152) over the water. Window 1 hosts a rightward crossing (deterministic in
+/// the window hash); frame 1084 places the whale mid-pane. This is the frozen
+/// picture of one crossing frame — bless it if the glyph or path changes.
+#[test]
+fn whale_crossing_snapshot_40x12() {
+    let terminal = rendered_at_frame(whale_only_sea(), 40, 12, 1084);
+    let actual = rows_of(&terminal, 40, 12);
+    let expected = [
+        "   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~",
+        "                       .                ",
+        "                      \":\"               ",
+        "        |\"\\/\"|     ____:___             ",
+        "         \\  /    .,        '`           ",
+        "         |  \\___/        O  |           ",
+        "                                        ",
+        "                                        ",
+        "                                        ",
+        "                                        ",
+        "                                        ",
+        "                                        ",
+    ];
+    assert_snapshot(&actual, &expected);
+
+    // The whale is drawn in its own color, so its cells are countable.
+    use ratatui::style::Color;
+    let buffer = terminal.backend().buffer();
+    let whale_cells = (0..12u16)
+        .flat_map(|y| (0..40u16).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(152))
+        })
+        .count();
+    assert!(whale_cells > 0, "the whale paints in indexed 152");
+}
+
+/// The whale can hang partly off-screen: put() clamps per cell, so only the
+/// on-screen slice draws (unlike the patrol clamp, which fits the whole glyph).
+/// Early in the same rightward window the whale is still entering from the left,
+/// so its right portion is on-screen and nothing is drawn past the left edge.
+#[test]
+fn whale_partly_off_screen_draws_its_on_screen_slice() {
+    use ratatui::style::Color;
+
+    // Window 1 (rightward). At a small local frame the whale anchor is negative,
+    // so its left columns fall off-pane and only the right slice shows.
+    let terminal = rendered_at_frame(whale_only_sea(), 40, 12, 960 + 20);
+    let buffer = terminal.backend().buffer();
+    let whale: Vec<(u16, u16)> = (0..12u16)
+        .flat_map(|y| (0..40u16).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(152))
+        })
+        .collect();
+
+    assert!(!whale.is_empty(), "part of the whale is on-screen");
+    // A partial crossing shows fewer cells than a full one (frame 1084).
+    let full = rows_of(&rendered_at_frame(whale_only_sea(), 40, 12, 1084), 40, 12)
+        .join("")
+        .matches(|c: char| !c.is_whitespace())
+        .count();
+    assert!(
+        whale.len() < full,
+        "a partial whale shows fewer cells ({}) than a full one ({full})",
+        whale.len()
+    );
+    // Nothing is drawn out of bounds — put() dropped the off-pane columns.
+    assert!(
+        whale.iter().all(|&(x, _)| x < 40),
+        "no whale cell lands past the pane edge"
+    );
+}
+
+/// Below the biomass threshold the whale never appears, even in a window that
+/// would otherwise host a crossing. The visit is earned by a thriving tank.
+#[test]
+fn whale_stays_away_below_the_biomass_threshold() {
+    use ratatui::style::Color;
+
+    let mut state = whale_only_sea();
+    state.nutrient = 400 * MICRO - 1; // one under the default gate
+                                      // Frame 1084 is a crossing frame for a thriving tank; here biomass is short.
+    let terminal = rendered_at_frame(state, 40, 12, 1084);
+    let buffer = terminal.backend().buffer();
+    let whale = (0..12u16)
+        .flat_map(|y| (0..40u16).map(move |x| (x, y)))
+        .any(|(x, y)| buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(152)));
+    assert!(!whale, "no whale below the biomass threshold");
+}
+
+/// A pane too short (under 8 rows) omits the whale — a five-row sprite needs
+/// headroom. The same crossing frame at ample height does show it.
+#[test]
+fn whale_omitted_in_a_short_pane() {
+    use ratatui::style::Color;
+
+    let has_whale = |h: u16| {
+        let terminal = rendered_at_frame(whale_only_sea(), 40, h, 1084);
+        let buffer = terminal.backend().buffer();
+        (0..h)
+            .flat_map(|y| (0..40u16).map(move |x| (x, y)))
+            .any(|(x, y)| {
+                buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(152))
+            })
+    };
+    assert!(!has_whale(7), "no whale in a 7-row pane");
+    assert!(has_whale(12), "the whale shows once there is headroom");
+}
+
+/// The colors of the sunken-anchor pixel art (iron / worn highlight / rust),
+/// mirroring src/ui/wallpaper.rs — a cell painted in any of them is anchor.
+fn is_anchor_color(fg: Option<ratatui::style::Color>) -> bool {
+    use ratatui::style::Color;
+    matches!(
+        fg,
+        Some(Color::Indexed(66)) | Some(Color::Indexed(109)) | Some(Color::Indexed(94))
+    )
+}
+
+/// The sunken anchor is a score-unlocked landmark: absent below the unlock,
+/// present at or above it, drawn as floor scenery in its half-block pixel-art
+/// palette (iron 66 / highlight 109 / rust 94). Rendered on the thin pane (no
+/// HUD) so the colors are unambiguous.
+#[test]
+fn anchor_appears_only_after_its_score_unlock() {
+    let anchor_cells = |score: u128| -> usize {
+        let mut state = State::new();
+        state.score = score;
+        state.started = true; // a live sea; the anchor is not a reef, so no rock needed
+        let (w, h) = (40u16, 12u16);
+        let terminal = rendered_terminal_with(state, w, h);
+        let buffer = terminal.backend().buffer();
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| is_anchor_color(buffer.cell((x, y)).expect("cell").style().fg))
+            .count()
+    };
+
+    // Default unlock is 5,000. Just under: no anchor. At the unlock: it appears.
+    assert_eq!(
+        anchor_cells(5_000 * MICRO - 1),
+        0,
+        "no anchor below the score unlock"
+    );
+    assert!(
+        anchor_cells(5_000 * MICRO) > 0,
+        "the anchor appears once the score unlocks it"
+    );
+}
+
+/// The unlocked anchor sits at a fixed floor position that clears every rock
+/// body from the thin-pane target (40 cols) up. With a reef at each slot the
+/// anchor still renders its full glyph, none of it overwritten by a rock body.
+/// (Narrower panes may share a column — the reef overdraws, by paint order.)
+#[test]
+fn anchor_sits_clear_of_the_rock_slots() {
+    use ratatui::style::Color;
+
+    for (w, h) in [(40u16, 12u16), (100, 30)] {
+        let mut state = State::new();
+        state.score = 5_000 * MICRO; // anchor unlocked
+        state.started = true;
+        // A rock on every slot: the anchor must still land in a gap between them.
+        state.rocks = (0..SLOTS).map(|slot| Rock { kind: 0, slot }).collect();
+        let terminal = rendered_terminal_with(state, w, h);
+        let buffer = terminal.backend().buffer();
+
+        let anchor: Vec<(u16, u16)> = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| is_anchor_color(buffer.cell((x, y)).expect("cell").style().fg))
+            .collect();
+        // The half-block pixel art fills 16 cells (rows: 3 + 5 + 3 + 5). If a
+        // rock body overdrew any of them, that cell would read rock-gray and the
+        // count would fall short — so 16 also proves the anchor clears the reefs.
+        assert_eq!(
+            anchor.len(),
+            16,
+            "{w}x{h}: the whole anchor glyph renders, clear of every rock body: {anchor:?}"
+        );
+        // No rock-gray body cell shares an anchor column on the floor row.
+        let floor = h - 1;
+        for &(x, y) in &anchor {
+            if y == floor {
+                assert_ne!(
+                    buffer.cell((x, y)).expect("cell").style().fg,
+                    Some(Color::Indexed(245)),
+                    "{w}x{h}: a rock body must not overlap the anchor at column {x}"
+                );
+            }
+        }
+    }
+}
+
+/// The anchor sprite is four rows tall, so a pane too short omits it — and the
+/// height guard runs before the bottom-anchored row math, which would otherwise
+/// underflow (`floor + 1 - rows` wraps when a 4-row sprite is placed in a 3-row
+/// pane). Below the guard height (6) nothing is drawn and nothing panics; at the
+/// guard height the anchor appears.
+#[test]
+fn anchor_omitted_in_a_short_pane() {
+    let anchor_cells = |h: u16| -> usize {
+        let mut state = State::new();
+        state.score = 5_000 * MICRO; // unlocked, so only the height gates it
+        state.started = true;
+        let w = 40u16;
+        let terminal = rendered_terminal_with(state, w, h);
+        let buffer = terminal.backend().buffer();
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| is_anchor_color(buffer.cell((x, y)).expect("cell").style().fg))
+            .count()
+    };
+    // Height 3 is the genuine underflow case; 5 is the boundary just under the
+    // guard. Both must draw nothing and (by not panicking) prove the guard.
+    assert_eq!(
+        anchor_cells(3),
+        0,
+        "no anchor — and no panic — in a 3-row pane"
+    );
+    assert_eq!(
+        anchor_cells(5),
+        0,
+        "no anchor in a 5-row pane just below the guard"
+    );
+    assert!(
+        anchor_cells(6) > 0,
+        "the anchor shows once there is headroom"
     );
 }

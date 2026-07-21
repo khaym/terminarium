@@ -275,6 +275,10 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
         );
     }
 
+    // Markers and the cursor ghost paint on the time-of-day water, same as the
+    // live tank, so the placement screen reads under the current sky too.
+    let water = wallpaper::water_color(app.phase);
+
     // Markers tick the free slots only — a placed reef owns its column, and a
     // marker drawn over it would punch a hole through the body.
     let floor_y = tank.bottom() - 1;
@@ -288,6 +292,7 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
             wallpaper::slot_center_x(tank, slot),
             floor_y,
             MARKER,
+            water,
         );
     }
 
@@ -301,8 +306,16 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
         .iter()
         .find(|r| r.slot == app.placement_cursor)
     {
-        Some(rock) => wallpaper::draw_rock(tank, buf, cursor_x, floor_y, rock.kind, GRABBED),
-        None => wallpaper::draw_rock(tank, buf, cursor_x, floor_y, app.placement_kind, PREVIEW),
+        Some(rock) => wallpaper::draw_rock(tank, buf, cursor_x, floor_y, rock.kind, GRABBED, water),
+        None => wallpaper::draw_rock(
+            tank,
+            buf,
+            cursor_x,
+            floor_y,
+            app.placement_kind,
+            PREVIEW,
+            water,
+        ),
     }
 
     buf.set_stringn(

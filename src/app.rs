@@ -29,10 +29,45 @@ pub fn layer_for(width: u16, height: u16) -> Layer {
     }
 }
 
+/// Time-of-day phase, the explicit rendering input that colors the sea. Derived
+/// from the local wall-clock hour in the binary and carried on `App`, so the
+/// renderer stays a pure function of (state, frame, phase). Night is the
+/// pre-phase palette, so a night render is byte-for-byte the old picture.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Phase {
+    Dawn,
+    Day,
+    Dusk,
+    Night,
+}
+
+impl Phase {
+    /// The phase for a 24-hour local hour. Boundaries are placeholders (dawn
+    /// 5-8, day 8-17, dusk 17-20, night 20-5), fixed as constants here so tuning
+    /// them is a one-line change. Hours outside the day span (including 0-4 and
+    /// 20-23) are night.
+    pub fn from_hour(hour: u32) -> Phase {
+        const DAWN_START: u32 = 5;
+        const DAY_START: u32 = 8;
+        const DUSK_START: u32 = 17;
+        const NIGHT_START: u32 = 20;
+        match hour {
+            h if (DAWN_START..DAY_START).contains(&h) => Phase::Dawn,
+            h if (DAY_START..DUSK_START).contains(&h) => Phase::Day,
+            h if (DUSK_START..NIGHT_START).contains(&h) => Phase::Dusk,
+            _ => Phase::Night,
+        }
+    }
+}
+
 pub struct App {
     pub state: State,
     pub params: Params,
     pub layer: Layer,
+    /// Time-of-day phase, an explicit render input. Defaults to `Night` (the
+    /// pre-phase palette) so a bare `App` renders exactly the old picture; the
+    /// binary overwrites it each frame from the local clock.
+    pub phase: Phase,
     /// Animation frame counter; rendering is a pure function of state + frame.
     pub frame: u64,
     /// Collected amount to flash on the HUD, with frames left to live.
@@ -61,6 +96,7 @@ impl App {
             state,
             params,
             layer: Layer::Wallpaper,
+            phase: Phase::Night,
             frame: 0,
             flash: None,
             // Start mid-floor so the first move goes either way.
@@ -598,6 +634,32 @@ mod tests {
             app.state, expected,
             "the carried remainder completes a tick"
         );
+    }
+
+    #[test]
+    fn phase_boundaries_map_hours_to_time_of_day() {
+        // Placeholder boundaries: dawn 5-8, day 8-17, dusk 17-20, night 20-5.
+        // Boundary hours belong to the later phase (half-open intervals).
+        assert_eq!(Phase::from_hour(4), Phase::Night, "pre-dawn is night");
+        assert_eq!(Phase::from_hour(5), Phase::Dawn, "dawn opens at 5");
+        assert_eq!(Phase::from_hour(7), Phase::Dawn);
+        assert_eq!(Phase::from_hour(8), Phase::Day, "day opens at 8");
+        assert_eq!(Phase::from_hour(12), Phase::Day);
+        assert_eq!(Phase::from_hour(16), Phase::Day);
+        assert_eq!(Phase::from_hour(17), Phase::Dusk, "dusk opens at 17");
+        assert_eq!(Phase::from_hour(19), Phase::Dusk);
+        assert_eq!(Phase::from_hour(20), Phase::Night, "night opens at 20");
+        assert_eq!(Phase::from_hour(23), Phase::Night);
+        assert_eq!(Phase::from_hour(0), Phase::Night, "midnight is night");
+    }
+
+    #[test]
+    fn a_bare_app_is_night_so_old_snapshots_are_the_regression_guard() {
+        // Night is the pre-phase palette; defaulting to it keeps every existing
+        // snapshot byte-for-byte, which is what makes them the phase regression
+        // guard. The binary overwrites the phase from the clock at runtime.
+        let app = app_with(State::new());
+        assert_eq!(app.phase, Phase::Night);
     }
 
     #[test]

@@ -6,8 +6,9 @@ use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use chrono::{Local, Timelike};
 use crossterm::event::{self, Event, KeyEventKind};
-use tui_game::app::App;
+use tui_game::app::{App, Phase};
 use tui_game::engine::Params;
 use tui_game::{cli, save, ui};
 
@@ -88,6 +89,10 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App, save_path: &Path)
 
         if Instant::now() >= next_frame {
             app.on_frame();
+            // Refresh the time-of-day phase from the local clock each frame, so
+            // the sea's color tracks the hour. Rendering stays pure: the phase
+            // is an explicit input, decided here, never read inside the draw.
+            app.phase = Phase::from_hour(Local::now().hour());
             terminal.draw(|frame| ui::draw(app, frame))?;
             next_frame = Instant::now() + FRAME_INTERVAL;
         }

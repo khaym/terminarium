@@ -93,6 +93,14 @@ pub struct Params {
     /// Deliberately short of the first algae's cost — the player still watches
     /// the rock→sediment→collect→buy causal chain close over a few seconds.
     pub seed_currency: u128,
+    /// Total biomass at or above which a visiting whale may cross the pane. The
+    /// whale is pure decoration outside the economy — this only gates the
+    /// sighting, so a thriving (or long-idle) tank earns the lucky visit.
+    pub whale_biomass: u128,
+    /// Lifetime score at which the sunken-anchor scenery is unlocked. Derived
+    /// from score like the reef unlocks, so no save field is added; once
+    /// unlocked the anchor is drawn as a permanent landmark and hosts no events.
+    pub anchor_unlock: u128,
 }
 
 impl Params {
@@ -149,6 +157,8 @@ impl Default for Params {
             ],
             budget_steps: vec![(0, 1), (12_000 * MICRO, 2), (30_000 * MICRO, 3)],
             seed_currency: 80 * MICRO,
+            whale_biomass: 400 * MICRO,
+            anchor_unlock: 5_000 * MICRO,
         }
     }
 }
