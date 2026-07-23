@@ -42,6 +42,15 @@ impl State {
         self.pool.iter().sum::<u128>() + self.nutrient + self.collectable
     }
 
+    /// Biomass held in living populations only — the species pools, excluding
+    /// the uncollected sediment (`collectable`) and free nutrient. This is what
+    /// a "thriving tank" means for scenery gates: a sea earns it by keeping life
+    /// alive, not by letting surplus pile up unpaid. Purely derived from state,
+    /// so it touches neither the economy nor the save.
+    pub fn living_biomass(&self) -> u128 {
+        self.pool.iter().sum()
+    }
+
     /// A run has begun once the player commits the placement (`start_run`).
     /// Before that the caller must not `advance` — the clock only runs during a
     /// live run.

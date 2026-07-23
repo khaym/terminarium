@@ -47,6 +47,10 @@ fn main() -> io::Result<()> {
     let state = save::load(&path, &params, unix_now(), options.time_scale);
     let mut app = App::new(state, params);
     app.time_scale = options.time_scale;
+    // Anchor the animation clock to wall time: the launch instant, measured in
+    // whole frames, seeds the frame epoch the renderer rides (see wallpaper).
+    // The divisor is FRAME_INTERVAL itself, so the frame length has one source.
+    app.frame_epoch = unix_now_ms() / FRAME_INTERVAL.as_millis() as u64;
 
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &mut app, &path);

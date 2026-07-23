@@ -70,6 +70,11 @@ pub struct App {
     pub phase: Phase,
     /// Animation frame counter; rendering is a pure function of state + frame.
     pub frame: u64,
+    /// Wall-clock frame offset captured at launch, so animation time is anchored
+    /// to real time rather than restarting from zero each run. The renderer rides
+    /// `frame_epoch + frame`; the binary seeds it from the clock, and a bare
+    /// `App` leaves it 0 so tests and snapshots see the unshifted timeline.
+    pub frame_epoch: u64,
     /// Collected amount to flash on the HUD, with frames left to live.
     pub flash: Option<(u128, u8)>,
     /// Floor slot the placement cursor sits on, in `0..SLOTS`. Only meaningful
@@ -98,6 +103,7 @@ impl App {
             layer: Layer::Wallpaper,
             phase: Phase::Night,
             frame: 0,
+            frame_epoch: 0,
             flash: None,
             // Start mid-floor so the first move goes either way.
             placement_cursor: SLOTS / 2,

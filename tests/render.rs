@@ -1238,9 +1238,10 @@ fn time_of_day_recolors_the_water_and_surface() {
 fn whale_only_sea() -> State {
     State {
         population: [0, 0, 0, 0],
-        pool: [0; 4],
-        // Nutrient alone clears the whale's biomass gate (400 units, default).
-        nutrient: 400 * MICRO,
+        // Living biomass in the pools alone clears the whale's gate (400 units,
+        // default); with no rocks every reef sprite skips, so the whale is alone.
+        pool: [400 * MICRO, 0, 0, 0],
+        nutrient: 0,
         collectable: 0,
         currency: 0,
         score: 0, // below the anchor unlock, so no anchor either
@@ -1251,12 +1252,14 @@ fn whale_only_sea() -> State {
 }
 
 /// A crossing frame: a whale glides across the sea, drawn in its pale blue-gray
-/// (152) over the water. Window 1 hosts a rightward crossing (deterministic in
-/// the window hash); frame 1084 places the whale mid-pane. This is the frozen
-/// picture of one crossing frame — bless it if the glyph or path changes.
+/// (152) over the water. Window 28 hosts a rightward crossing (deterministic in
+/// the window hash, at rarity 1/32); frame 27004 sits at local offset 124 —
+/// mid-pane, the same position window 1 held before the rarity change. This is
+/// the frozen picture of one crossing frame — bless it if the glyph or path
+/// changes.
 #[test]
 fn whale_crossing_snapshot_40x12() {
-    let terminal = rendered_at_frame(whale_only_sea(), 40, 12, 1084);
+    let terminal = rendered_at_frame(whale_only_sea(), 40, 12, 27004);
     let actual = rows_of(&terminal, 40, 12);
     let expected = [
         "   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~",
@@ -1294,9 +1297,9 @@ fn whale_crossing_snapshot_40x12() {
 fn whale_partly_off_screen_draws_its_on_screen_slice() {
     use ratatui::style::Color;
 
-    // Window 1 (rightward). At a small local frame the whale anchor is negative,
-    // so its left columns fall off-pane and only the right slice shows.
-    let terminal = rendered_at_frame(whale_only_sea(), 40, 12, 960 + 20);
+    // Window 28 (rightward). At a small local frame the whale anchor is
+    // negative, so its left columns fall off-pane and only the right slice shows.
+    let terminal = rendered_at_frame(whale_only_sea(), 40, 12, 26900);
     let buffer = terminal.backend().buffer();
     let whale: Vec<(u16, u16)> = (0..12u16)
         .flat_map(|y| (0..40u16).map(move |x| (x, y)))
@@ -1306,8 +1309,8 @@ fn whale_partly_off_screen_draws_its_on_screen_slice() {
         .collect();
 
     assert!(!whale.is_empty(), "part of the whale is on-screen");
-    // A partial crossing shows fewer cells than a full one (frame 1084).
-    let full = rows_of(&rendered_at_frame(whale_only_sea(), 40, 12, 1084), 40, 12)
+    // A partial crossing shows fewer cells than a full one (frame 27004).
+    let full = rows_of(&rendered_at_frame(whale_only_sea(), 40, 12, 27004), 40, 12)
         .join("")
         .matches(|c: char| !c.is_whitespace())
         .count();
@@ -1323,16 +1326,24 @@ fn whale_partly_off_screen_draws_its_on_screen_slice() {
     );
 }
 
-/// Below the biomass threshold the whale never appears, even in a window that
-/// would otherwise host a crossing. The visit is earned by a thriving tank.
+/// Below the living-biomass threshold the whale never appears, even in a window
+/// that would otherwise host a crossing — and even when a large uncollected
+/// surplus sits in the tank. The visit is earned by living populations, not by
+/// letting sediment pile up: the gate reads `living_biomass`, so the heap of
+/// `collectable` and `nutrient` here (which the old total-biomass gate would
+/// have counted) does not buy the sighting.
 #[test]
 fn whale_stays_away_below_the_biomass_threshold() {
     use ratatui::style::Color;
 
     let mut state = whale_only_sea();
-    state.nutrient = 400 * MICRO - 1; // one under the default gate
-                                      // Frame 1084 is a crossing frame for a thriving tank; here biomass is short.
-    let terminal = rendered_at_frame(state, 40, 12, 1084);
+    // Living biomass one under the gate, but a big surplus and nutrient piled on
+    // top — enough that the old pool+nutrient+collectable gate would have let the
+    // whale in. Frame 27004 is a crossing frame, so only the gate suppresses it.
+    state.pool = [400 * MICRO - 1, 0, 0, 0];
+    state.collectable = 10_000 * MICRO;
+    state.nutrient = 10_000 * MICRO;
+    let terminal = rendered_at_frame(state, 40, 12, 27004);
     let buffer = terminal.backend().buffer();
     let whale = (0..12u16)
         .flat_map(|y| (0..40u16).map(move |x| (x, y)))
@@ -1347,7 +1358,7 @@ fn whale_omitted_in_a_short_pane() {
     use ratatui::style::Color;
 
     let has_whale = |h: u16| {
-        let terminal = rendered_at_frame(whale_only_sea(), 40, h, 1084);
+        let terminal = rendered_at_frame(whale_only_sea(), 40, h, 27004);
         let buffer = terminal.backend().buffer();
         (0..h)
             .flat_map(|y| (0..40u16).map(move |x| (x, y)))
@@ -1357,6 +1368,53 @@ fn whale_omitted_in_a_short_pane() {
     };
     assert!(!has_whale(7), "no whale in a 7-row pane");
     assert!(has_whale(12), "the whale shows once there is headroom");
+}
+
+/// Every animation clock rides one absolute frame, `frame_epoch + frame`, so the
+/// picture is a pure function of that sum: equal sums render identically no
+/// matter how the total splits between the launch epoch and the in-session
+/// counter, while pushing the epoch forward at a fixed `frame` advances the
+/// timeline across restarts (here past the whale's crossing window).
+#[test]
+fn animation_rides_frame_epoch_plus_frame() {
+    use ratatui::style::Color;
+
+    let render = |epoch: u64, frame: u64| {
+        let mut app = App::new(whale_only_sea(), Params::default());
+        app.on_resize(40, 12);
+        app.frame_epoch = epoch;
+        app.frame = frame;
+        let backend = TestBackend::new(40, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|f| ui::draw(&app, f)).expect("draw");
+        terminal
+    };
+
+    // Purity: the same epoch + frame sum (27_004) renders the identical picture,
+    // however it is split.
+    let split_a = render(1_000, 26_004);
+    let split_b = render(27_004, 0);
+    assert_eq!(
+        split_a.backend().buffer(),
+        split_b.backend().buffer(),
+        "equal frame_epoch + frame must render identically"
+    );
+
+    // Advance: window 28 (frame 27_004) hosts a crossing; holding app.frame and
+    // pushing the epoch one whale window (960 frames) reaches window 29, which
+    // hosts none — the timeline moved with the epoch, as it would across a
+    // restart whose launch time sits a window later.
+    let whale = |t: &Terminal<TestBackend>| {
+        let buf = t.backend().buffer();
+        (0..12u16)
+            .flat_map(|y| (0..40u16).map(move |x| (x, y)))
+            .any(|(x, y)| buf.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(152)))
+    };
+    assert!(whale(&render(0, 27_004)), "window 28 shows the whale");
+    assert!(
+        !whale(&render(960, 27_004)),
+        "a later epoch advances the same frame past the crossing window"
+    );
 }
 
 /// The colors of the sunken-anchor pixel art (iron / worn highlight / rust),

@@ -28,11 +28,12 @@
 //! glow — every sprite color is unchanged, since all read on all four
 //! backgrounds (observed). Night is the original palette, so a night render is
 //! byte-for-byte the pre-phase picture. A visiting whale (`draw_whale`) is pure
-//! decoration outside the economy: gated on total biomass, it crosses in only
-//! 1-in-K deterministic frame windows so a sighting stays a rare, reproducible
-//! treat. The sunken-anchor scenery (`draw_anchor`) is a score-unlocked
-//! landmark, derived from score alone so it costs no save field. Neither touches
-//! population, pool, or the save — they only read the gate quantities.
+//! decoration outside the economy: gated on the living-population biomass, it
+//! crosses in only 1-in-K deterministic frame windows so a sighting stays a
+//! rare, reproducible treat. The sunken-anchor scenery (`draw_anchor`) is a
+//! score-unlocked landmark, derived from score alone so it costs no save field.
+//! Both only read their gate quantity (living biomass, score); neither writes
+//! state nor touches the save.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -112,13 +113,16 @@ const WHALE_MIN_HEIGHT: u16 = 8;
 /// fraction of a window is spent on-screen, so a sighting is scarce.
 const WHALE_PERIOD: u64 = 960;
 /// A crossing happens in only 1 of every K windows — the rarity that makes the
-/// whale a lucky sight rather than a fixture.
-const WHALE_RARITY: u64 = 4;
+/// whale a lucky sight rather than a fixture. At WHALE_PERIOD/~5fps per window,
+/// 1-in-32 averages roughly one sighting every 1.7 hours.
+const WHALE_RARITY: u64 = 32;
 /// Frames per column step; higher is slower. The whale ambles slower than the
 /// big fish (slowdown 2) and the dugong (3).
 const WHALE_SLOWDOWN: u64 = 4;
-/// Hash salt for the window gate. One hash decides both rarity (low bits) and
-/// heading (bit 2), keeping the cadence a pure function of the window number.
+/// Hash salt for the window gate. One hash decides both rarity (its low bits)
+/// and heading (its top bit — disjoint from the rarity mask for any rarity, so
+/// widening the rarity never freezes the heading), keeping the cadence a pure
+/// function of the window number.
 const WHALE_SALT: u64 = 41;
 
 /// The whale, 23x5, facing left (head and eye at the left, tail flukes at the
@@ -339,7 +343,12 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
     if area.width < 4 || area.height < 3 {
         return;
     }
-    let frame = app.frame;
+    // Every animation clock is anchored to launch time: the epoch (wall-clock
+    // frames at startup) plus the in-session frame counter gives one absolute
+    // frame the whole scene rides. So waves, fish, and the whale's rare windows
+    // all advance with real time across restarts instead of replaying from zero
+    // each launch. A bare `App` has epoch 0, so tests and snapshots stay fixed.
+    let frame = app.frame_epoch.wrapping_add(app.frame);
     // The time-of-day palette recolors only the water; every sprite paints on
     // top of it, so the water color threads through every draw below.
     let water = water_color(app.phase);
@@ -728,28 +737,30 @@ fn patrol(
 /// Whether a whale crosses in `window`, and if so its heading (`true` =
 /// rightward). Deterministic in the window number — no RNG, no clock — so the
 /// sighting cadence is reproducible and snapshot-stable. One hash decides both:
-/// the low bits gate the 1-in-K rarity, and bit 2 (independent of that gate)
-/// alternates the heading roughly evenly.
+/// its low bits gate the 1-in-K rarity, and its top bit — which no rarity mask
+/// reaches — alternates the heading roughly evenly (a low heading bit would fall
+/// inside the mask once the rarity grew and freeze the whale to one direction).
 fn whale_crossing(window: u64) -> Option<bool> {
     let h = mix(window, WHALE_SALT);
     if !h.is_multiple_of(WHALE_RARITY) {
         return None;
     }
-    Some((h >> 2) & 1 == 0)
+    Some(h >> 63 == 0)
 }
 
 /// A visiting whale gliding across the sea — pure decoration outside the
-/// economy. It appears only when total biomass has reached the threshold, and
-/// only in the rare windows `whale_crossing` opens; within a window the frame
-/// maps to an x position, so the whale enters fully off one edge and exits fully
-/// off the other. `put` clamps each cell, so a partly off-screen whale draws
-/// just its on-screen slice (unlike patrol, which fits the whole glyph). Reads
-/// only the biomass gate — never population, pool, or the save.
+/// economy. It appears only when the living-population biomass has reached the
+/// threshold, and only in the rare windows `whale_crossing` opens; within a
+/// window the frame maps to an x position, so the whale enters fully off one
+/// edge and exits fully off the other. `put` clamps each cell, so a partly
+/// off-screen whale draws just its on-screen slice (unlike patrol, which fits
+/// the whole glyph). Reads only the living-biomass gate — a sea kept alive earns
+/// it, uncollected sediment does not; never touches population count or the save.
 fn draw_whale(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color) {
     if area.height < WHALE_MIN_HEIGHT {
         return;
     }
-    if app.state.biomass() < app.params.whale_biomass {
+    if app.state.living_biomass() < app.params.whale_biomass {
         return;
     }
     let Some(rightward) = whale_crossing(frame / WHALE_PERIOD) else {

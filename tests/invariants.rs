@@ -419,6 +419,51 @@ fn regrown_reef_out_collects_the_old_one() {
     );
 }
 
+/// Fill the given reef to housing, converge, and read the living biomass (the
+/// species pools) — the steady stock a filled tank holds, independent of how
+/// often surplus is collected (collection never touches the pools).
+fn steady_living_biomass(rocks: &[(usize, u8)], score: u128) -> u128 {
+    let p = Params::default();
+    let mut s = State::new();
+    s.score = score;
+    for &(kind, slot) in rocks {
+        assert!(
+            s.place_rock(kind, slot, &p),
+            "reef {rocks:?} must place within unlock/budget at score {score}"
+        );
+    }
+    assert!(s.start_run(&p));
+    s.advance(600, &p); // let the slowest housing emerge
+    for i in 0..4 {
+        s.population[i] = s.capacity(i, &p);
+    }
+    s.advance(30_000, &p); // converge
+    s.living_biomass()
+}
+
+/// Invariant — the whale gate marks a grown sea: a full budget-3 rock reef
+/// (rock×3, every species bought to housing, converged) stays under the whale's
+/// living-biomass gate, while the smallest full budget-5 reef (rock×5) clears
+/// it. So crossing the second wall and filling the larger reef is what earns the
+/// visit — the gate reads living populations (`living_biomass`), not surplus.
+#[test]
+fn whale_gate_sits_between_full_budget_three_and_five_reefs() {
+    let p = Params::default();
+    let full3 = steady_living_biomass(&[(0, 0), (0, 1), (0, 2)], 30_000 * MICRO);
+    let full5 = steady_living_biomass(&[(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)], 75_000 * MICRO);
+
+    assert!(
+        full3 < p.whale_biomass,
+        "a full budget-3 rock sea must stay under the whale gate: {full3} vs {}",
+        p.whale_biomass
+    );
+    assert!(
+        p.whale_biomass <= full5,
+        "a full budget-5 rock sea must earn the whale: gate {} vs {full5}",
+        p.whale_biomass
+    );
+}
+
 /// Invariant 11b — the second wall pays off: after the budget-5 step (score
 /// 75,000) a kelp+coral sea collects faster at steady state than the best reef
 /// budget 3 can compose (kelp alone / coral+rock / rock×3). The existence proof

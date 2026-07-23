@@ -95,9 +95,12 @@ pub struct Params {
     /// Deliberately short of the first algae's cost — the player still watches
     /// the rock→sediment→collect→buy causal chain close over a few seconds.
     pub seed_currency: u128,
-    /// Total biomass at or above which a visiting whale may cross the pane. The
-    /// whale is pure decoration outside the economy — this only gates the
-    /// sighting, so a thriving (or long-idle) tank earns the lucky visit.
+    /// Living-population biomass (the species pools, via `State::living_biomass`)
+    /// at or above which a visiting whale may cross the pane. The whale is pure
+    /// decoration outside the economy — this only gates the sighting, so a tank
+    /// kept alive earns the lucky visit, while uncollected sediment does not buy
+    /// it. Placeholder, pinned by the invariant that a full budget-3 rock sea
+    /// stays under it and a full budget-5 rock sea clears it.
     pub whale_biomass: u128,
     /// Lifetime score at which the sunken-anchor scenery is unlocked. Derived
     /// from score like the reef unlocks, so no save field is added; once
