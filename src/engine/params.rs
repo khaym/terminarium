@@ -9,8 +9,10 @@ pub const MICRO: u128 = 1_000_000;
 pub const SPECIES: usize = 4;
 
 /// Discrete floor positions a rock can occupy in a run. Placement uses a slot
-/// index in `0..SLOTS`; the renderer maps it to a pane column.
-pub const SLOTS: u8 = 5;
+/// index in `0..SLOTS`; the renderer maps it to a pane column. Nine positions
+/// give the placement phase real composition room while the odd count keeps a
+/// true center slot (and the cursor's `SLOTS / 2` start) on the midline.
+pub const SLOTS: u8 = 9;
 
 /// Trophic chain, bottom to top. The numeric value doubles as the array index.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

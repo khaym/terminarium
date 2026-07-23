@@ -775,13 +775,15 @@ fn draw_whale(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color)
 }
 
 /// The sunken-anchor landmark, once the lifetime score has unlocked it. It sits
-/// at a fixed floor column — the midpoint of the two right-hand slots (0.8
-/// width). From ~40 columns up (the thin-pane target) that midpoint clears every
-/// rock body; in a still-narrower pane the anchor can share a column or two with
-/// a reef, and drawing the anchor before the rocks lets the reef overdraw it, so
-/// it reads as sitting behind the reef rather than punching through it. It hosts
-/// no events. Bottom-anchored to the floor, four rows tall. Derived from score
-/// alone, so it adds no save field.
+/// at a fixed floor column, 0.8 of the pane width — a position chosen for the
+/// old 5-slot grid, where it fell between the two right-hand slots and cleared
+/// every rock body. Under the 9-slot grid that column lands on slot 7's reef:
+/// they share a column or two, and — because the anchor draws before the rocks —
+/// the reef overdraws it there, so the anchor reads as sitting behind that reef
+/// rather than punching through it. This is an accepted degradation until #15
+/// makes the anchor position configurable. It hosts no events. Bottom-anchored
+/// to the floor, four rows tall. Derived from score alone, so it adds no save
+/// field.
 fn draw_anchor(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
     // Guard the height before the bottom-anchored row math (`floor + 1 - rows`),
     // which would underflow if a 4-row sprite were placed in a shorter pane.
@@ -791,7 +793,7 @@ fn draw_anchor(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
     if app.state.score < app.params.anchor_unlock {
         return;
     }
-    let center = (i64::from(area.width) * 4) / 5; // 0.8 * width, between slots 3 and 4
+    let center = (i64::from(area.width) * 4) / 5; // 0.8 * width, on slot 7's reef (9-slot grid)
     let floor = area.bottom() - 1;
     let rows = ANCHOR.len() as u16;
     for (r, cells) in ANCHOR.iter().enumerate() {

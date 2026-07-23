@@ -369,20 +369,23 @@ mod tests {
 
         // Default cursor sits mid-floor.
         assert_eq!(app.placement_cursor, SLOTS / 2);
-        assert_eq!(app.placement_cursor, 2);
-
-        // Right (and l) walks up and wraps past the last slot.
-        app.on_key(KeyCode::Right, none);
-        assert_eq!(app.placement_cursor, 3);
-        app.on_key(KeyCode::Char('l'), none);
         assert_eq!(app.placement_cursor, 4);
+
+        // Right (and l) walk up by one.
+        app.on_key(KeyCode::Right, none);
+        assert_eq!(app.placement_cursor, 5);
+        app.on_key(KeyCode::Char('l'), none);
+        assert_eq!(app.placement_cursor, 6);
+
+        // From the last slot, stepping right wraps to the first.
+        app.placement_cursor = SLOTS - 1;
         app.on_key(KeyCode::Right, none);
         assert_eq!(
             app.placement_cursor, 0,
             "past the last slot wraps to the first"
         );
 
-        // Left (and h) walks down and wraps past the first slot.
+        // From the first slot, stepping left wraps to the last.
         app.on_key(KeyCode::Left, none);
         assert_eq!(
             app.placement_cursor,
@@ -390,7 +393,7 @@ mod tests {
             "before the first wraps to the last"
         );
         app.on_key(KeyCode::Char('h'), none);
-        assert_eq!(app.placement_cursor, 3);
+        assert_eq!(app.placement_cursor, SLOTS - 2);
     }
 
     #[test]
@@ -400,7 +403,7 @@ mod tests {
         let none = KeyModifiers::NONE;
         assert!(!app.state.run_started());
 
-        app.on_key(KeyCode::Right, none); // cursor 2 -> 3
+        app.on_key(KeyCode::Right, none); // cursor 4 -> 5
         app.on_key(KeyCode::Enter, none);
 
         assert!(
@@ -409,7 +412,7 @@ mod tests {
         );
         assert_eq!(app.state.rocks.len(), 1);
         assert_eq!(app.state.rocks[0].kind, 0);
-        assert_eq!(app.state.rocks[0].slot, 3);
+        assert_eq!(app.state.rocks[0].slot, 5);
 
         // The clock stays still until the run is committed.
         app.on_elapsed(3_000);
@@ -476,16 +479,16 @@ mod tests {
         app.on_resize(100, 30);
         let none = KeyModifiers::NONE;
 
-        app.on_key(KeyCode::Enter, none); // rock at cursor 2
-        app.on_key(KeyCode::Right, none); // cursor -> 3
-        app.on_key(KeyCode::Enter, none); // rock at 3
+        app.on_key(KeyCode::Enter, none); // rock at cursor 4
+        app.on_key(KeyCode::Right, none); // cursor -> 5
+        app.on_key(KeyCode::Enter, none); // rock at 5
         assert_eq!(app.state.rocks.len(), 2);
         assert!(!app.state.run_started(), "placing does not start the run");
 
-        // Backspace lifts the rock under the cursor (slot 3).
+        // Backspace lifts the rock under the cursor (slot 5).
         app.on_key(KeyCode::Backspace, none);
         assert_eq!(app.state.rocks.len(), 1);
-        assert_eq!(app.state.rocks[0].slot, 2);
+        assert_eq!(app.state.rocks[0].slot, 4);
 
         app.on_key(KeyCode::Char('s'), none);
         assert!(app.state.run_started());

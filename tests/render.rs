@@ -123,17 +123,17 @@ fn wallpaper_snapshot_40x12() {
     let actual = render_at(40, 12);
     let expected = [
         " ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~  ",
-        "              ><)))>                    ",
+        "     ><)))>                             ",
         "                                        ",
-        "                       .                ",
-        "                      .                 ",
+        "              .                         ",
+        "             .                          ",
         "                                        ",
-        "                  .                     ",
+        "         .                              ",
         "                                        ",
         "                                        ",
-        "                  )   ⠁(><>             ",
-        "                  (   )><>              ",
-        "                 ▁)▄█▄((                ",
+        "         )   ⠁(><>                      ",
+        "         (   )><>                       ",
+        "        ▁)▄█▄((                         ",
     ];
     assert_snapshot(&actual, &expected);
 
@@ -151,7 +151,7 @@ fn game_snapshot_100x30() {
     let actual = render_at(100, 30);
     let expected = [
         " ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~   ~~  ",
-        "                                            ><)))>                                                  ",
+        "                     ><)))>                                                                         ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
@@ -160,21 +160,21 @@ fn game_snapshot_100x30() {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "                                                    ⠁                                               ",
+        "                             ⠁                                                                      ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "                                                    .                                               ",
+        "                             .                                                                      ",
         "                                                                                                    ",
-        "                                                ⠂                                                   ",
+        "                         ⠂                                                                          ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "                                                )    (><>                                           ",
-        "                                                (   )><>                                            ",
-        "                                                )▄█▄((                                              ",
+        "                         )    (><>                                                                  ",
+        "                         (   )><>                                                                   ",
+        "                         )▄█▄((                                                                     ",
         "────────────────────────────────────────────────────────────────────────────────────────────────────",
         " [1] Algae 3/4  $141   [2] Plankton 2/3  $565   [3] Small fish 2/2  $1129   [4] Big fish 1/1  $4480 ",
         " $ 630  +210 collected                                                                              ",
@@ -326,10 +326,87 @@ fn placement_snapshot_100x30() {
         "                                                                                                    ",
         "                                                                                                    ",
         "                                                                                                    ",
-        "          ▁                   ▁                  ▄█▄                  ▁                   ▁         ",
+        "     ▁          ▁          ▁          ▁          ▄█▄         ▁          ▁          ▁          ▁     ",
         " [</>] move  [^/v] kind  [enter] place  [bksp] remove  [s] start                                    ",
     ];
     assert_snapshot(&actual, &expected);
+}
+
+/// The placement screen offers every floor slot: with no reef placed yet, each
+/// free slot shows a dim floor marker except the one under the cursor, which
+/// shows the reef ghost instead. So the free markers number one short of the
+/// slot count — nine slots, eight markers plus the ghost. This is the 5->9 slot
+/// increase (chalk #17): a wider grid to compose a reef across.
+#[test]
+fn placement_marks_all_nine_slots() {
+    use ratatui::style::Color;
+
+    let terminal = rendered_terminal_with(State::new(), 100, 30);
+    let buffer = terminal.backend().buffer();
+    // Placement reserves the bottom row for the hint, so the floor is row 28.
+    let floor = 28u16;
+    let markers = (0..100u16)
+        .filter(|&x| {
+            let cell = buffer.cell((x, floor)).expect("cell");
+            cell.symbol() == "▁" && cell.style().fg == Some(Color::Indexed(236))
+        })
+        .count();
+    assert_eq!(
+        markers, 8,
+        "eight free-slot markers; the ninth slot is under the cursor ghost"
+    );
+    assert_eq!(usize::from(SLOTS), markers + 1, "nine slots in all");
+}
+
+/// Nine slots must still fit the minimum game pane (80x20) without the reefs
+/// crowding. With a rock on every slot (and one algae frond each), every 3-wide
+/// body lands on its own three columns — nine whole bodies are 27 floor cells —
+/// and every frond fans into a gap between bodies, nine fronds in nine distinct
+/// columns. Algae draw after rocks, so a frond straying onto a neighbour's body
+/// would overwrite it and drop the 27 below; that it holds proves non-overlap.
+#[test]
+fn nine_reefs_fit_the_min_pane_without_overlap() {
+    use ratatui::style::Color;
+    use std::collections::HashSet;
+
+    // One algae per rock: population equals the slot count, shared round-robin
+    // across the rocks, so each reef shows a single frond in its nearest flank.
+    let state = State {
+        population: [u32::from(SLOTS), 0, 0, 0],
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 0,
+        rocks: (0..SLOTS).map(|slot| Rock { kind: 0, slot }).collect(),
+        tick_count: 30,
+        started: true,
+    };
+    let (w, h) = (80u16, 20u16);
+    let terminal = rendered_terminal_with(state, w, h);
+    let buffer = terminal.backend().buffer();
+    // Game layer: the tank sits above the 5-row HUD, so its floor is row 14.
+    let floor = 14u16;
+
+    let body_cells = (0..w)
+        .filter(|&x| buffer.cell((x, floor)).expect("cell").style().fg == Some(Color::Indexed(245)))
+        .count();
+    assert_eq!(
+        body_cells,
+        usize::from(SLOTS) * 3,
+        "nine 3-wide rock bodies, none overlapping or overdrawn by a frond"
+    );
+
+    let frond_columns: HashSet<u16> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(35)))
+        .map(|(x, _)| x)
+        .collect();
+    assert_eq!(
+        frond_columns.len(),
+        usize::from(SLOTS),
+        "one frond per reef, each in its own flank column: {frond_columns:?}"
+    );
 }
 
 /// Feedback (a): a bought individual must show in the picture. With one rock
@@ -371,15 +448,15 @@ fn algae_population_shows_one_column_each() {
 /// The tank's home is a thin always-on side pane, so a bought individual must
 /// show even there — including at an edge slot, where a naive fan runs some of
 /// its columns off-pane. Across widths 20 and 30 with the rock at slot 0 and at
-/// slot 4, four algae still render as four frond columns: off-pane candidate
-/// columns are skipped in favour of in-pane ones.
+/// the last slot, four algae still render as four frond columns: off-pane
+/// candidate columns are skipped in favour of in-pane ones.
 #[test]
 fn algae_visible_at_edge_slots_in_narrow_panes() {
     use ratatui::style::Color;
     use std::collections::HashSet;
 
     for w in [20u16, 30] {
-        for slot in [0u8, 4] {
+        for slot in [0u8, SLOTS - 1] {
             let state = State {
                 population: [4, 0, 0, 0],
                 pool: [0; 4],
@@ -742,14 +819,14 @@ fn placement_ghost_and_placed_rock_take_the_kind() {
 fn placed_reefs_stay_whole_during_placement() {
     use ratatui::style::Color;
 
-    // A rock placed at slot 0 (center column 10, floor row 28 at 100x30) with
+    // A rock placed at slot 0 (center column 5, floor row 28 at 100x30) with
     // the cursor elsewhere: the body keeps its center cell.
     let mut state = State::new();
     state.score = 12_000 * MICRO; // budget 2: placement continues after one rock
     state.rocks = vec![Rock { kind: 0, slot: 0 }];
     let terminal = rendered_terminal_with(state.clone(), 100, 30);
     let buffer = terminal.backend().buffer();
-    let center = buffer.cell((10, 28)).expect("cell");
+    let center = buffer.cell((5, 28)).expect("cell");
     assert_eq!(
         center.symbol(),
         "█",
@@ -768,14 +845,14 @@ fn placed_reefs_stay_whole_during_placement() {
     app.placement_kind = 1;
     let terminal = rendered_terminal_of(app, 100, 30);
     let buffer = terminal.backend().buffer();
-    let center = buffer.cell((10, 28)).expect("cell");
+    let center = buffer.cell((5, 28)).expect("cell");
     assert_eq!(center.symbol(), "█", "the grabbed rock keeps its shape");
     assert_eq!(
         center.style().fg,
         Some(Color::Indexed(222)),
         "the grabbed rock is relit in the cursor tone"
     );
-    let side = buffer.cell((9, 28)).expect("cell");
+    let side = buffer.cell((4, 28)).expect("cell");
     assert_eq!(side.symbol(), "▄", "no coral ghost over the placed rock");
 }
 
@@ -871,7 +948,10 @@ fn dugong_fully_drawn_in_narrow_pane() {
         collectable: 0,
         currency: 0,
         score: 30_000 * MICRO,
-        rocks: vec![Rock { kind: 2, slot: 4 }], // edge slot: worst case for the clamp
+        rocks: vec![Rock {
+            kind: 2,
+            slot: SLOTS - 1,
+        }], // edge slot: worst case for the clamp
         tick_count: 300,
         started: true,
     };
@@ -1134,47 +1214,47 @@ fn anchor_appears_only_after_its_score_unlock() {
     );
 }
 
-/// The unlocked anchor sits at a fixed floor position that clears every rock
-/// body from the thin-pane target (40 cols) up. With a reef at each slot the
-/// anchor still renders its full glyph, none of it overwritten by a rock body.
-/// (Narrower panes may share a column — the reef overdraws, by paint order.)
+/// The anchor's fixed 0.8-width column was chosen for the old 5-slot grid, where
+/// it fell between the two right-hand slots and cleared every rock body. Under
+/// the 9-slot grid its column now lands on slot 7's reef. At the minimum game
+/// pane (80x20) the anchor spans columns 62..=66 and slot 7's body covers
+/// 65..=67, so the two right anchor cells share a floor column with that body;
+/// the anchor draws before the rocks, so the reef overdraws it there (it reads
+/// as behind the reef). The other 14 pixel-art cells still render. This is an
+/// accepted narrow-grid degradation until #15 makes the anchor position
+/// configurable — it does not remove or move the anchor.
 #[test]
-fn anchor_sits_clear_of_the_rock_slots() {
+fn anchor_overdrawn_by_the_slot_seven_reef_at_min_pane() {
     use ratatui::style::Color;
 
-    for (w, h) in [(40u16, 12u16), (100, 30)] {
-        let mut state = State::new();
-        state.score = 5_000 * MICRO; // anchor unlocked
-        state.started = true;
-        // A rock on every slot: the anchor must still land in a gap between them.
-        state.rocks = (0..SLOTS).map(|slot| Rock { kind: 0, slot }).collect();
-        let terminal = rendered_terminal_with(state, w, h);
-        let buffer = terminal.backend().buffer();
+    let (w, h) = (80u16, 20u16);
+    let mut state = State::new();
+    state.score = 5_000 * MICRO; // anchor unlocked
+    state.started = true;
+    // A reef on every slot — the crowded worst case for the fixed anchor.
+    state.rocks = (0..SLOTS).map(|slot| Rock { kind: 0, slot }).collect();
+    let terminal = rendered_terminal_with(state, w, h);
+    let buffer = terminal.backend().buffer();
 
-        let anchor: Vec<(u16, u16)> = (0..h)
-            .flat_map(|y| (0..w).map(move |x| (x, y)))
-            .filter(|&(x, y)| is_anchor_color(buffer.cell((x, y)).expect("cell").style().fg))
-            .collect();
-        // The half-block pixel art fills 16 cells (rows: 3 + 5 + 3 + 5). If a
-        // rock body overdrew any of them, that cell would read rock-gray and the
-        // count would fall short — so 16 also proves the anchor clears the reefs.
+    // Game layer: the tank floor sits above the 5-row HUD, at row 14.
+    let floor = 14u16;
+    // Slot 7's body (cols 65..=67) overdraws the anchor's two right floor cells.
+    for x in [65u16, 66] {
         assert_eq!(
-            anchor.len(),
-            16,
-            "{w}x{h}: the whole anchor glyph renders, clear of every rock body: {anchor:?}"
+            buffer.cell((x, floor)).expect("cell").style().fg,
+            Some(Color::Indexed(245)),
+            "the slot-7 reef draws in front of the anchor at column {x}"
         );
-        // No rock-gray body cell shares an anchor column on the floor row.
-        let floor = h - 1;
-        for &(x, y) in &anchor {
-            if y == floor {
-                assert_ne!(
-                    buffer.cell((x, y)).expect("cell").style().fg,
-                    Some(Color::Indexed(245)),
-                    "{w}x{h}: a rock body must not overlap the anchor at column {x}"
-                );
-            }
-        }
     }
+    // The rest of the anchor glyph (14 of its 16 cells) still renders.
+    let anchor = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| is_anchor_color(buffer.cell((x, y)).expect("cell").style().fg))
+        .count();
+    assert_eq!(
+        anchor, 14,
+        "the two overdrawn floor cells aside, the anchor glyph renders"
+    );
 }
 
 /// The anchor sprite is four rows tall, so a pane too short omits it — and the

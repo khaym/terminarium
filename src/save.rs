@@ -432,11 +432,36 @@ mod tests {
         // Kind out of range (the default table has kinds 0..=2).
         assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=3:0"), &p).is_none());
         // Slot at or beyond SLOTS.
-        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=0:0,0:5"), &p).is_none());
+        assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=0:0,0:9"), &p).is_none());
         // Duplicated slot.
         assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=0:0,0:0"), &p).is_none());
         // Malformed pair (missing the kind:slot separator).
         assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=00,0:2"), &p).is_none());
+    }
+
+    #[test]
+    fn old_five_slot_saves_still_load() {
+        // A save written under the old 5-slot grid (slot indices 0..=4) stays
+        // valid under the 9-slot grid: the indices are still in range, so the
+        // reef is read back intact. The renderer maps those indices onto the
+        // denser grid, so the reef shows further left than before — an accepted
+        // position shift (the save stores the slot index, not a pane column),
+        // not a load failure. #17 does not re-map old slots.
+        let p = Params::default();
+        let old = State {
+            // Budget 2 (score past the first step) admits the two base rocks.
+            score: 12_000 * MICRO,
+            rocks: vec![Rock { kind: 0, slot: 0 }, Rock { kind: 0, slot: 4 }],
+            tick_count: 42,
+            started: true,
+            ..State::new()
+        };
+        let (parsed, _) =
+            parse(&serialize(&old, 1), &p).expect("a save from the old 5-slot grid still loads");
+        assert_eq!(
+            parsed.rocks, old.rocks,
+            "slot indices 0..=4 survive the 5->9 slot increase unchanged"
+        );
     }
 
     #[test]
