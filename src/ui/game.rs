@@ -27,8 +27,11 @@ const AFFORDABLE: Color = Color::Indexed(114);
 /// Species with no housing left: dimmed, so "no point buying" reads at a glance.
 const FULL: Color = Color::Indexed(240);
 const HINT: Color = Color::Indexed(245);
-/// Placement preview: dimmer than a placed rock, so the ghost reads as tentative.
-const PREVIEW: Color = Color::Indexed(240);
+/// Placement preview: a calm gold, distinct from any placed rock body and from
+/// the grabbed tone, so the ghost stands out on the sea of every time of day
+/// (the old mid-gray sank into the darker night/dusk water). Its shape, not its
+/// color, tells which kind will drop.
+const PREVIEW: Color = Color::Indexed(178);
 /// Placement slot markers: fainter still than the preview.
 const MARKER: Color = Color::Indexed(236);
 /// A placed rock under the placement cursor: relit warm so it reads as grabbed

@@ -961,8 +961,9 @@ fn new_sea_prompt_shows_when_pending() {
 }
 
 /// Composing a coral reef (run not started): the placed coral shows its real
-/// body color, and the cursor ghost shows the selected kind's shape in the dim
-/// preview tone — the ghost's shape carries the kind, since its color does not.
+/// body color, and the cursor ghost shows the selected kind's shape in the
+/// calm-gold preview tone — the ghost's shape carries the kind, since its color
+/// does not.
 #[test]
 fn placement_ghost_and_placed_rock_take_the_kind() {
     use ratatui::style::Color;
@@ -982,19 +983,53 @@ fn placement_ghost_and_placed_rock_take_the_kind() {
         .any(|(x, y)| buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(174)));
     assert!(placed_coral, "the placed coral shows its real color");
 
-    // The cursor ghost is the coral shape (a branch glyph) in the dim preview
-    // tone (240), so the shape tells the player which kind will drop.
+    // The cursor ghost is the coral shape (a branch glyph) in the calm-gold
+    // preview tone (178), so the shape tells the player which kind will drop.
     let ghost = (0..30u16)
         .flat_map(|y| (0..100u16).map(move |x| (x, y)))
         .any(|(x, y)| {
             let cell = buffer.cell((x, y)).expect("cell");
             (cell.symbol() == "╱" || cell.symbol() == "╲")
-                && cell.style().fg == Some(Color::Indexed(240))
+                && cell.style().fg == Some(Color::Indexed(178))
         });
     assert!(
         ghost,
-        "the cursor ghost takes the selected kind's shape, dimmed"
+        "the cursor ghost takes the selected kind's shape, in the preview tone"
     );
+}
+
+/// Feedback (2026-07-23): the placement ghost must stand out on the sea of every
+/// time of day, so the player sees where the reef will drop. The old mid-gray
+/// preview (240) sank into the darker water (night 17, dusk 53); the calm-gold
+/// tone (178) paints over whichever phase colors the sea — dawn 60, day 24, dusk
+/// 53, night 17 — so the ghost is legible on all four backgrounds.
+#[test]
+fn placement_ghost_stands_out_on_every_phase_water() {
+    use ratatui::style::Color;
+
+    // (phase, water bg) — the four confirmed sea colors (wallpaper::water_color).
+    let cases = [
+        (Phase::Dawn, 60u8),
+        (Phase::Day, 24),
+        (Phase::Dusk, 53),
+        (Phase::Night, 17),
+    ];
+    for (phase, water) in cases {
+        // The placement screen (run not started) with its default cursor ghost.
+        let terminal = rendered_phase_frame(State::new(), 100, 30, 8, phase);
+        let buffer = terminal.backend().buffer();
+        let ghost = (0..30u16)
+            .flat_map(|y| (0..100u16).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(178))
+            })
+            .expect("the ghost paints its calm-gold preview tone");
+        assert_eq!(
+            buffer.cell(ghost).expect("cell").style().bg,
+            Some(Color::Indexed(water)),
+            "{phase:?}: the ghost's gold sits on the phase water, not lost in it"
+        );
+    }
 }
 
 /// Placed reefs must stay whole on the placement screen: the free-slot markers
