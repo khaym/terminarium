@@ -160,7 +160,7 @@ impl Default for Params {
             budget_steps: vec![(0, 1), (12_000 * MICRO, 2), (30_000 * MICRO, 3)],
             seed_currency: 80 * MICRO,
             whale_biomass: 400 * MICRO,
-            anchor_unlock: 5_000 * MICRO,
+            anchor_unlock: 75_000 * MICRO,
         }
     }
 }

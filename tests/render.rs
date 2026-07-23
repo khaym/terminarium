@@ -1202,14 +1202,15 @@ fn anchor_appears_only_after_its_score_unlock() {
             .count()
     };
 
-    // Default unlock is 5,000. Just under: no anchor. At the unlock: it appears.
+    // Default unlock is 75,000 (the budget-5 wall). Just under: no anchor. At
+    // the unlock: it appears.
     assert_eq!(
-        anchor_cells(5_000 * MICRO - 1),
+        anchor_cells(75_000 * MICRO - 1),
         0,
         "no anchor below the score unlock"
     );
     assert!(
-        anchor_cells(5_000 * MICRO) > 0,
+        anchor_cells(75_000 * MICRO) > 0,
         "the anchor appears once the score unlocks it"
     );
 }
@@ -1229,7 +1230,7 @@ fn anchor_overdrawn_by_the_slot_seven_reef_at_min_pane() {
 
     let (w, h) = (80u16, 20u16);
     let mut state = State::new();
-    state.score = 5_000 * MICRO; // anchor unlocked
+    state.score = 75_000 * MICRO; // anchor unlocked
     state.started = true;
     // A reef on every slot — the crowded worst case for the fixed anchor.
     state.rocks = (0..SLOTS).map(|slot| Rock { kind: 0, slot }).collect();
@@ -1266,7 +1267,7 @@ fn anchor_overdrawn_by_the_slot_seven_reef_at_min_pane() {
 fn anchor_omitted_in_a_short_pane() {
     let anchor_cells = |h: u16| -> usize {
         let mut state = State::new();
-        state.score = 5_000 * MICRO; // unlocked, so only the height gates it
+        state.score = 75_000 * MICRO; // unlocked, so only the height gates it
         state.started = true;
         let w = 40u16;
         let terminal = rendered_terminal_with(state, w, h);
