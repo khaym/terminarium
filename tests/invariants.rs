@@ -419,6 +419,33 @@ fn regrown_reef_out_collects_the_old_one() {
     );
 }
 
+/// Invariant 11b — the second wall pays off: after the budget-5 step (score
+/// 75,000) a kelp+coral sea collects faster at steady state than the best reef
+/// budget 3 can compose (kelp alone / coral+rock / rock×3). The existence proof
+/// that crossing the new wall is worth it, mirroring the budget-2-over-1 proof.
+#[test]
+fn budget_five_reef_out_collects_the_best_budget_three() {
+    const WINDOW: u64 = 5_000;
+    let t3 = 30_000 * MICRO;
+    let t5 = 75_000 * MICRO;
+
+    // The three ways to spend budget 3 (every kind is unlocked by score 30,000).
+    let kelp = steady_collection_over_window(&[(2, 0)], t3, WINDOW);
+    let coral_rock = steady_collection_over_window(&[(1, 0), (0, 1)], t3, WINDOW);
+    let rock_x3 = steady_collection_over_window(&[(0, 0), (0, 1), (0, 2)], t3, WINDOW);
+    let best_three = kelp.max(coral_rock).max(rock_x3);
+
+    // Budget 5 buys kelp+coral — the composition the new wall unlocks.
+    let kelp_coral = steady_collection_over_window(&[(2, 0), (1, 1)], t5, WINDOW);
+
+    assert!(
+        kelp_coral > best_three,
+        "kelp+coral (budget 5) must out-collect the best budget-3 reef: \
+         {kelp_coral} vs best {best_three} \
+         (kelp {kelp}, coral+rock {coral_rock}, rock×3 {rock_x3})"
+    );
+}
+
 /// Invariant 12 — unlock stride: playing the opening greedily (each 90s peek:
 /// advance, collect, buy everything affordable with housing) reaches the first
 /// unlock (score 12,000) *after* the tank has filled, and within twelve peeks
@@ -557,7 +584,9 @@ fn budget_grows_in_steps_and_gates_placement() {
     assert_eq!(p.budget(12_000 * MICRO), 2);
     assert_eq!(p.budget(30_000 * MICRO - 1), 2);
     assert_eq!(p.budget(30_000 * MICRO), 3);
-    assert_eq!(p.budget(u128::MAX), 3);
+    assert_eq!(p.budget(75_000 * MICRO - 1), 3);
+    assert_eq!(p.budget(75_000 * MICRO), 5);
+    assert_eq!(p.budget(u128::MAX), 5);
 
     // At score 0 the budget is 1: one base rock places, a second does not.
     let mut s = State::new();

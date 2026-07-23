@@ -146,12 +146,17 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
 }
 
 /// The HUD score line, and whether it calls for action. The one rule: when the
-/// score's budget exceeds what the placed reef spends, a rebuild yields a
-/// strictly bigger reef — so the line says what a new sea could place (the
-/// newest unlocked kind absent from this reef), and reads as actionable. It
-/// clears itself once a rebuild spends the full budget. Otherwise the line
-/// shows the next locked threshold as the goal, or just the score once every
-/// reef is unlocked. Amounts hide the micro unit, like the rest of the HUD.
+/// score's budget exceeds what the placed reef spends, a rebuild could place
+/// more reef — so the line shows the headroom in the placement screen's budget
+/// vocabulary (`budget {spent}/{budget}`) and points at a new sea, reading as
+/// actionable. It also names the kind the latest crossed budget wall unlocked,
+/// if that wall added one, so a wall crossing announces its reward. The name
+/// belongs to the *latest* wall only, so crossing the next wall drops it — a
+/// past unlock can never masquerade as new (staleness cannot arise), and a
+/// budget step that adds no kind (e.g. the 75k step) shows budget alone. The
+/// nudge clears once a rebuild spends the full budget. Otherwise the line shows
+/// the next locked threshold as the goal, or just the score once every reef is
+/// unlocked. Amounts hide the micro unit, like the rest of the HUD.
 fn score_line(app: &App) -> (String, bool) {
     let score = app.state.score;
     let spent: u32 = app
@@ -160,22 +165,35 @@ fn score_line(app: &App) -> (String, bool) {
         .iter()
         .map(|r| app.params.rock_kinds[r.kind].cost)
         .sum();
-    if app.params.budget(score) > spent {
-        let fresh = (0..app.params.rock_kinds.len())
-            .rev()
-            .find(|&k| {
-                app.params.rock_kinds[k].unlock <= score
-                    && !app.state.rocks.iter().any(|r| r.kind == k)
-            })
-            .map(|k| app.params.rock_kinds[k].name)
-            .unwrap_or("a bigger reef");
-        return (
-            format!(
-                "score {}   {fresh} unlocked - [n] new sea",
+    let budget = app.params.budget(score);
+    if budget > spent {
+        // The latest budget wall the score has crossed, and the kind (if any)
+        // that wall unlocked — the reward to name while it is still the newest.
+        let wall = app
+            .params
+            .budget_steps
+            .iter()
+            .map(|&(threshold, _)| threshold)
+            .filter(|&t| t <= score)
+            .max()
+            .unwrap_or(0);
+        let fresh = app
+            .params
+            .rock_kinds
+            .iter()
+            .rfind(|k| k.unlock == wall)
+            .map(|k| k.name);
+        let line = match fresh {
+            Some(name) => format!(
+                "score {}   {name} unlocked, budget {spent}/{budget} - [n] new sea",
                 fmt_amount(score)
             ),
-            true,
-        );
+            None => format!(
+                "score {}   budget {spent}/{budget} - [n] new sea",
+                fmt_amount(score)
+            ),
+        };
+        return (line, true);
     }
     let next = app
         .params

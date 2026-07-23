@@ -85,12 +85,15 @@ const DUGONG: Color = Color::Indexed(180);
 /// Collectable surplus represented by one cell of floor sediment.
 const SEDIMENT_PER_CELL: u128 = 30 * MICRO;
 
-/// On-screen sprite caps: the wallpaper suggests abundance, it does not chart
-/// it — populations beyond the cap just keep the tank at full life.
-const MAX_ALGAE: u64 = 12;
-const MAX_PLANKTON: u64 = 14;
-const MAX_SMALL_FISH: u64 = 8;
-const MAX_BIG_FISH: u64 = 4;
+/// On-screen sprite caps. A bought individual always shows (feedback (a)), so
+/// each cap sits at or above the largest population the default params can field
+/// — any reef within the max budget and the slot count. They bite only on an
+/// out-of-range state (e.g. a tampered save), never in real play. The
+/// `sprite_caps_cover_every_reachable_population` test pins them to the params.
+const MAX_ALGAE: u64 = 20;
+const MAX_PLANKTON: u64 = 15;
+const MAX_SMALL_FISH: u64 = 12;
+const MAX_BIG_FISH: u64 = 7;
 
 /// Patrol radius (cells either side of the host rock) by fish size. Small fish
 /// stay tight to the reef; big fish sweep a wider, statelier beat.
@@ -904,5 +907,60 @@ mod tests {
             right * 5 > total * 2 && left * 5 > total * 2,
             "headings should be balanced, got right {right} / left {left}"
         );
+    }
+
+    /// Sprite caps must never clip a bought individual (feedback (a)): for every
+    /// reef the default params can compose — any multiset of kinds within the max
+    /// budget and the slot count — each species' total housing stays within its
+    /// on-screen cap. Enumerating all such reefs keeps the bound honest: widen a
+    /// budget step or a capacity past a cap and this goes red at the cap to raise
+    /// (which is exactly how #16's budget-5 step surfaced the old caps).
+    #[test]
+    fn sprite_caps_cover_every_reachable_population() {
+        use crate::engine::Params;
+
+        let p = Params::default();
+        let max_budget = p
+            .budget_steps
+            .iter()
+            .map(|&(_, b)| b)
+            .max()
+            .expect("a budget schedule");
+        let species = p.rock_kinds[0].capacity.len();
+
+        // Depth-first over multisets of kinds (a non-decreasing start index counts
+        // each composition once), bounded by remaining budget and slots; track the
+        // largest per-species housing any reachable reef reaches.
+        fn walk(p: &Params, start: usize, budget: u32, slots: u32, caps: &[u32], best: &mut [u32]) {
+            for (b, &c) in best.iter_mut().zip(caps.iter()) {
+                *b = (*b).max(c);
+            }
+            if slots == 0 {
+                return;
+            }
+            for kind in start..p.rock_kinds.len() {
+                let rk = &p.rock_kinds[kind];
+                if rk.cost <= budget {
+                    let next: Vec<u32> = caps
+                        .iter()
+                        .zip(rk.capacity.iter())
+                        .map(|(a, c)| a + c)
+                        .collect();
+                    walk(p, kind, budget - rk.cost, slots - 1, &next, best);
+                }
+            }
+        }
+
+        let zero = vec![0u32; species];
+        let mut best = zero.clone();
+        walk(&p, 0, max_budget, u32::from(SLOTS), &zero, &mut best);
+
+        let caps = [MAX_ALGAE, MAX_PLANKTON, MAX_SMALL_FISH, MAX_BIG_FISH];
+        for (sp, (&reach, &cap)) in best.iter().zip(caps.iter()).enumerate() {
+            assert!(
+                u64::from(reach) <= cap,
+                "species {sp}: reachable population {reach} exceeds sprite cap {cap}"
+            );
+        }
     }
 }

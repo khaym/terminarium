@@ -633,6 +633,87 @@ fn fish_patrol_follows_its_rock() {
     }
 }
 
+/// Feedback (a) at the budget-5 wall: a five-rock sea filled to housing shows
+/// every bought individual. rock×5 tops out at algae 20, plankton 15, small fish
+/// 10, big fish 5 — and the renderer draws each in full. The pre-#16 sprite caps
+/// (12/14/8/4) clipped all four; without the raise this test goes red. Rocks sit
+/// on spread slots (0,2,4,6,8) so their colonies do not cross, and static
+/// sprites are counted by column while gliding fish are counted by their glyph
+/// cells at the least-occluded frame of a sweep.
+#[test]
+fn rock_five_sea_draws_the_full_population() {
+    use ratatui::style::Color;
+    use std::collections::HashSet;
+
+    let state = State {
+        population: [20, 15, 10, 5],
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 0, // below the anchor unlock, so no landmark tints the count
+        rocks: (0..5u8)
+            .map(|k| Rock {
+                kind: 0,
+                slot: k * 2,
+            })
+            .collect(),
+        tick_count: 30,
+        started: true,
+    };
+    let (w, h) = (100u16, 30u16);
+
+    // Algae (35) and plankton (122) hold fixed columns; count distinct columns
+    // of each, unioned across a frame sweep (occlusion at one frame is clear at
+    // another). Fish glide, so count their glyph cells (small "><>", 3 cells;
+    // big 6 cells) and take the per-frame maximum — the least-occluded frame
+    // shows every cell, so the max is the true drawn count.
+    let mut algae_cols: HashSet<u16> = HashSet::new();
+    let mut plankton_cols: HashSet<u16> = HashSet::new();
+    let mut small_cells_max = 0usize;
+    let mut big_cells_max = 0usize;
+
+    for frame in 0..200u64 {
+        let terminal = rendered_at_frame(state.clone(), w, h, frame);
+        let buffer = terminal.backend().buffer();
+        let (mut small_cells, mut big_cells) = (0usize, 0usize);
+        for (x, y) in (0..h).flat_map(|y| (0..w).map(move |x| (x, y))) {
+            match buffer.cell((x, y)).expect("cell").style().fg {
+                Some(Color::Indexed(35)) => {
+                    algae_cols.insert(x);
+                }
+                Some(Color::Indexed(122)) => {
+                    plankton_cols.insert(x);
+                }
+                Some(Color::Indexed(215)) => small_cells += 1,
+                Some(Color::Indexed(209)) => big_cells += 1,
+                _ => {}
+            }
+        }
+        small_cells_max = small_cells_max.max(small_cells);
+        big_cells_max = big_cells_max.max(big_cells);
+    }
+
+    assert_eq!(
+        algae_cols.len(),
+        20,
+        "20 algae show as 20 frond columns, got {algae_cols:?}"
+    );
+    assert_eq!(
+        plankton_cols.len(),
+        15,
+        "15 plankton show as 15 columns, got {plankton_cols:?}"
+    );
+    assert_eq!(
+        small_cells_max, 30,
+        "10 small fish (3 cells each) fully drawn, got {small_cells_max}"
+    );
+    assert_eq!(
+        big_cells_max, 30,
+        "5 big fish (6 cells each) fully drawn, got {big_cells_max}"
+    );
+}
+
 /// Before a rock is placed the wallpaper is an empty sea: waves only, no reef,
 /// no life, no text — the wallpaper grammar is unchanged by the new run gate.
 #[test]
@@ -689,6 +770,42 @@ fn placement_lists_unlocked_kinds_budget_and_next_unlock() {
     );
 }
 
+/// The placement screen at the second wall (score 75,000, budget 5): the budget
+/// reads out of 5, every kind is selectable with no locked goal left, and a kelp
+/// dropped (cost 3) leaves room — budget 3/5, placement still open — so a kelp
+/// sea is no longer the lone-reef the budget-3 wall forced.
+#[test]
+fn placement_budget_five_leaves_room_after_kelp() {
+    // Score past the second wall: budget 5, every kind unlocked.
+    let mut state = State::new();
+    state.score = 75_000 * MICRO;
+    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("budget 0/5"),
+        "budget reads out of 5: {joined}"
+    );
+    assert!(joined.contains("kelp(3)"), "kelp is selectable at budget 5");
+    assert!(
+        !joined.contains("unlocks at"),
+        "no locked reef remains as a goal at budget 5"
+    );
+
+    // A kelp placed (cost 3) leaves 2 of the 5 — placement continues, unlike the
+    // budget-3 wall where kelp spent everything.
+    let mut state = State::new();
+    state.score = 75_000 * MICRO;
+    state.rocks = vec![Rock { kind: 2, slot: 0 }];
+    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("budget 3/5"),
+        "kelp spends 3 of 5, leaving room for more: {joined}"
+    );
+    assert!(
+        joined.contains("[enter] place"),
+        "the placement hint stays — more reef can still be dropped"
+    );
+}
+
 /// The HUD shows the lifetime score and, while a reef is still locked, the
 /// score threshold of the next one — the goal a new sea works toward. With
 /// every reef unlocked the goal drops and only the score remains.
@@ -706,16 +823,17 @@ fn hud_shows_score_and_next_reef() {
         "the next reef threshold reads"
     );
 
-    // Crossing a threshold mid-run: the budget now exceeds what the reef
-    // spends, so the line names the unlocked kind and points at the new sea —
-    // the reason to rebuild must stay visible after the unlock.
+    // Crossing a threshold mid-run: the budget now exceeds what the reef spends,
+    // so the line names the kind that wall unlocked and shows the unspent
+    // headroom in budget terms, pointing at the new sea — the crossing announces
+    // its reward and the reason to rebuild stays visible after the unlock.
     let mut state = fixed_state();
-    state.score = 12_000 * MICRO; // coral unlocked, reef still spends 1 of 2
+    state.score = 12_000 * MICRO; // coral's wall crossed; budget 2, one rock spends 1
     state.collectable = 0;
     let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
     assert!(
-        joined.contains("coral unlocked - [n] new sea"),
-        "an unlocked reef the run does not use is announced: {joined}"
+        joined.contains("coral unlocked, budget 1/2 - [n] new sea"),
+        "the crossed wall's coral reward and unspent budget are announced: {joined}"
     );
     assert!(
         !joined.contains("next reef"),
@@ -735,8 +853,76 @@ fn hud_shows_score_and_next_reef() {
         "score reads when all unlocked"
     );
     assert!(
-        !joined.contains("next reef") && !joined.contains("unlocked -"),
+        !joined.contains("next reef") && !joined.contains("- [n] new sea"),
         "no goal and no nudge once everything is unlocked and spent"
+    );
+}
+
+/// The headroom nudge speaks the placement screen's budget vocabulary, so it
+/// stays accurate at every budget step — including the budget-5 wall (score
+/// 75,000) that unlocks no new kind. A kelp reef past that wall reports its
+/// unspent budget instead of dressing long-unlocked coral as freshly
+/// "unlocked" (symptom 1), and the budget-5 step is announced at all where
+/// naming a kind said nothing (symptom 2). A fully-spent budget clears the line.
+#[test]
+fn headroom_nudge_reads_as_budget_at_the_second_wall() {
+    // A kelp reef (spends 3) past the budget-5 wall: budget 5 > 3, headroom
+    // shows. The old code named the newest absent kind — coral — as "unlocked"
+    // here, though coral unlocked at 12,000; budget vocabulary cannot go stale.
+    let mut state = fixed_state();
+    state.score = 75_000 * MICRO;
+    state.rocks = vec![Rock { kind: 2, slot: 2 }]; // kelp, spends 3 of 5
+    state.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("budget 3/5 - [n] new sea"),
+        "the nudge reports unspent budget: {joined}"
+    );
+    assert!(
+        !joined.contains("unlocked"),
+        "the nudge never claims a stale unlock: {joined}"
+    );
+
+    // kelp + rock spends 4 of 5 — the budget-5 wall's headroom announced in
+    // budget terms (regression guard for the silent budget-5 step).
+    let mut state = fixed_state();
+    state.score = 75_000 * MICRO;
+    state.rocks = vec![Rock { kind: 2, slot: 2 }, Rock { kind: 0, slot: 4 }];
+    state.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("budget 4/5 - [n] new sea"),
+        "the budget-5 headroom reads: {joined}"
+    );
+
+    // kelp + coral spends the full 5 — no headroom, so no nudge line.
+    let mut state = fixed_state();
+    state.score = 75_000 * MICRO;
+    state.rocks = vec![Rock { kind: 2, slot: 2 }, Rock { kind: 1, slot: 4 }];
+    state.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    assert!(
+        !joined.contains("- [n] new sea"),
+        "a fully-spent budget clears the nudge: {joined}"
+    );
+}
+
+/// The headroom nudge names the kind the latest crossed budget wall unlocked, so
+/// a wall crossing announces its reward. Past the 30k wall a coral reef (spends
+/// 2 of 3) reads the kelp unlock alongside its headroom. The name belongs to the
+/// latest wall only — crossing the next, kind-less wall (75k) drops it, which is
+/// why the second-wall test above sees no "unlocked": staleness cannot arise.
+/// Rendered at the 80-column minimum, so the fuller line still fits the pane.
+#[test]
+fn headroom_nudge_names_the_latest_crossed_wall() {
+    let mut state = fixed_state();
+    state.score = 30_000 * MICRO; // kelp's wall just crossed; budget 3
+    state.rocks = vec![Rock { kind: 1, slot: 2 }]; // coral, spends 2 of 3
+    state.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(state, 80, 20), 80, 20).join("\n");
+    assert!(
+        joined.contains("kelp unlocked, budget 2/3 - [n] new sea"),
+        "the 30k wall's kelp reward is named with the headroom, whole at 80 cols: {joined}"
     );
 }
 

@@ -157,7 +157,12 @@ impl Default for Params {
                     capacity: [9, 5, 2, 1],
                 },
             ],
-            budget_steps: vec![(0, 1), (12_000 * MICRO, 2), (30_000 * MICRO, 3)],
+            budget_steps: vec![
+                (0, 1),
+                (12_000 * MICRO, 2),
+                (30_000 * MICRO, 3),
+                (75_000 * MICRO, 5),
+            ],
             seed_currency: 80 * MICRO,
             whale_biomass: 400 * MICRO,
             anchor_unlock: 75_000 * MICRO,
