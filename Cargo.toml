@@ -2,6 +2,7 @@
 name = "terminarium"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/khaym/terminarium"
 
 [dependencies]
 crossterm = "0.29"
@@ -12,3 +13,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # A deterministic economy must fail loudly rather than wrap silently.
 [profile.release]
 overflow-checks = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
