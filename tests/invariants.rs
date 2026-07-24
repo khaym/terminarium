@@ -2,7 +2,7 @@
 //! work/economy-model.md. Parameter values are placeholders; these tests are
 //! the constraints they must keep satisfying while being tuned.
 
-use terminarium::engine::{Params, RockKind, Species, State, ANCHOR_POS_MAX, MICRO};
+use terminarium::engine::{Params, Species, State, ANCHOR_POS_MAX, MICRO};
 
 /// A tank with every trophic level active and non-trivial stocks, so that
 /// every branch of the tick (uptake, predation, decay, recycling) is live.
@@ -323,54 +323,79 @@ fn steady_state_after_capacity_is_filled() {
     );
 }
 
-/// Invariant 10 — emergence delay: a delayed rock's housing is withheld until
-/// tick_count reaches its delay, while its output is effective from placement.
+/// Business rule — a new sea is buyable the instant currency arrives, never
+/// gated by elapsed time. Placing kelp only (the kind that carried the longest
+/// old emergence delay) and starting the run, its housing is already in
+/// capacity at tick 0, so the first buy succeeds the moment currency covers the
+/// cost. This is the executable form of "after a new sea, the first purchasable
+/// moment is set by currency alone" — the death-time #22 removed.
 #[test]
-fn emergence_delay_gates_housing_not_output() {
-    const DELAY: u64 = 5;
-    let delayed = RockKind {
-        name: "delayed",
-        cost: 1,
-        unlock: 0,
-        output: 3 * MICRO,
-        delay: DELAY,
-        capacity: [2, 0, 0, 0],
-    };
-    let p = Params {
-        rock_kinds: vec![delayed],
-        ..Params::default()
-    };
+fn a_new_sea_is_buyable_the_instant_currency_arrives() {
+    let p = Params::default();
+    let kelp = 2usize; // unlock 30,000; cost 3 fits budget 3 at that score
+    let algae = Species::Algae as usize;
     let mut s = State::new();
-    assert!(s.place_rock(0, 0, &p));
+    s.score = 30_000 * MICRO;
+    assert!(s.place_rock(kelp, 0, &p));
     assert!(s.start_run(&p));
 
-    let algae = Species::Algae as usize;
-    for _ in 0..DELAY {
-        assert_eq!(
-            s.capacity(algae, &p),
-            0,
-            "housing is withheld before the delay"
-        );
-        s.advance(1, &p);
-    }
-    assert_eq!(s.tick_count, DELAY);
+    assert_eq!(
+        s.tick_count, 0,
+        "no time has passed since the new sea began"
+    );
     assert_eq!(
         s.capacity(algae, &p),
-        2,
-        "housing comes online once tick_count reaches the delay"
+        p.rock_kinds[kelp].capacity[algae],
+        "kelp housing counts from placement, not after an emergence delay"
     );
 
-    // Output was effective throughout the delay window — currency accrued
-    // before any housing existed.
+    // Currency alone gates the first buy: give exactly the cost and it succeeds
+    // at tick 0, with no advance.
+    s.currency = s.next_cost(Species::Algae, &p);
     assert!(
-        s.collectable > 0,
-        "rock output accrues from placement, not after the delay"
+        s.buy(Species::Algae, &p),
+        "the first algae is buyable the instant currency covers it"
     );
+    assert_eq!(s.population[algae], 1);
 }
 
-/// Fill every species to the housing the given reef provides, letting emergence
-/// delays elapse first, then converge and measure the collectable gained over a
-/// window — the steady collection rate of a filled tank.
+/// Invariant 10 — housing is immediate: a placed rock's capacity counts from
+/// the moment the run starts and never depends on elapsed time. (#22 removed
+/// the emergence delay — placement is the only thing that gates housing, so a
+/// new sea has full capacity at tick 0.)
+#[test]
+fn housing_counts_from_placement_regardless_of_time() {
+    let p = Params::default();
+    let mut s = State::new();
+    assert!(s.place_rock(0, 0, &p)); // base rock, housing [4, 3, 2, 1]
+    assert!(s.start_run(&p));
+
+    let expected: Vec<u32> = (0..4).map(|i| p.rock_kinds[0].capacity[i]).collect();
+
+    // At tick 0, before any advance, full housing is already available.
+    assert_eq!(s.tick_count, 0);
+    for (i, &cap) in expected.iter().enumerate() {
+        assert_eq!(
+            s.capacity(i, &p),
+            cap,
+            "species {i} housing counts from placement"
+        );
+    }
+
+    // Elapsed time never changes it.
+    s.advance(1_000, &p);
+    for (i, &cap) in expected.iter().enumerate() {
+        assert_eq!(
+            s.capacity(i, &p),
+            cap,
+            "species {i} housing is unchanged by elapsed time"
+        );
+    }
+}
+
+/// Fill every species to the housing the given reef provides, then converge and
+/// measure the collectable gained over a window — the steady collection rate of
+/// a filled tank.
 fn steady_collection_over_window(rocks: &[(usize, u8)], score: u128, window: u64) -> u128 {
     let p = Params::default();
     let mut s = State::new();
@@ -383,8 +408,7 @@ fn steady_collection_over_window(rocks: &[(usize, u8)], score: u128, window: u64
     }
     assert!(s.start_run(&p));
 
-    // Let the slowest housing emerge (kelp is 300 ticks), then fill to capacity.
-    s.advance(600, &p);
+    // Housing is available from placement, so fill to capacity right away.
     for i in 0..4 {
         s.population[i] = s.capacity(i, &p);
     }
@@ -433,7 +457,6 @@ fn steady_living_biomass(rocks: &[(usize, u8)], score: u128) -> u128 {
         );
     }
     assert!(s.start_run(&p));
-    s.advance(600, &p); // let the slowest housing emerge
     for i in 0..4 {
         s.population[i] = s.capacity(i, &p);
     }

@@ -19,8 +19,8 @@ fn fixed_state() -> State {
         currency: 420 * MICRO,
         score: 0,
         // A run in progress: started, with one base rock near mid-floor and a
-        // clock past zero, so housing has emerged (capacity HUD) and the reef
-        // anchors the scene (rock, gathered life, sediment mound under it).
+        // clock past zero. The reef anchors the scene (rock, gathered life,
+        // sediment mound under it).
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
@@ -240,7 +240,7 @@ fn palette_stays_in_indexed_256_space() {
 }
 
 /// The buy highlight answers "can I act on this species?" — it needs both money
-/// and free housing. With one emerged base rock (capacity [4,3,2,1]) and $200:
+/// and free housing. With one base rock (capacity [4,3,2,1]) and $200:
 ///   - algae 0/4 at $100     -> room + affordable   -> highlighted (green)
 ///   - plankton 0/3 at $450  -> room but too dear   -> plain
 ///   - small fish 2/2        -> housing full        -> dimmed, never highlighted
@@ -1220,8 +1220,8 @@ fn reef_variants_render_distinct_colors() {
 /// The apex individual takes on its host reef's character: over kelp it is a
 /// dugong (its own tan color, fully drawn at 6 cells), never a plain big fish.
 /// The kelp base layer shows its own frond color. A valid normal-play state:
-/// kelp unlocked (score >= 30000), budget spent (cost 3 <= budget 3), housing
-/// emerged (tick_count >= kelp delay 300), the one big-fish slot filled.
+/// kelp unlocked (score >= 30000), budget spent (cost 3 <= budget 3), the one
+/// big-fish slot filled.
 #[test]
 fn kelp_sea_shows_dugong() {
     use ratatui::style::Color;

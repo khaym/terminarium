@@ -43,8 +43,8 @@ impl Ratio {
 }
 
 /// A rock kind: its name, what it costs to place (budget, not currency), the
-/// score that unlocks it, the detritus it sheds per tick, how long before its
-/// housing comes online, and how many of each species it can house.
+/// score that unlocks it, the detritus it sheds per tick, and how many of each
+/// species it can house.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RockKind {
     /// Display name (also the identity in the placement UI).
@@ -54,12 +54,9 @@ pub struct RockKind {
     /// Score at which this kind unlocks. A kind is placeable once
     /// `score >= unlock`; unlock is a pure derivation of score, not state.
     pub unlock: u128,
-    /// Detritus shed per tick. Effective from placement — the emergence delay
-    /// gates housing only, never output (the run's only income until life is
-    /// bought; the seed grant is a one-time boost, not income).
+    /// Detritus shed per tick, effective from placement — the run's only income
+    /// until life is bought (the seed grant is a one-time boost, not income).
     pub output: u128,
-    /// Ticks after run start before this kind's housing counts toward capacity.
-    pub delay: u64,
     /// How many individuals of each species this kind can house.
     pub capacity: [u32; SPECIES],
 }
@@ -140,7 +137,6 @@ impl Default for Params {
                     cost: 1,
                     unlock: 0,
                     output: 3 * MICRO,
-                    delay: 0,
                     capacity: [4, 3, 2, 1],
                 },
                 RockKind {
@@ -148,7 +144,6 @@ impl Default for Params {
                     cost: 2,
                     unlock: 12_000 * MICRO,
                     output: 12 * MICRO,
-                    delay: 120,
                     capacity: [2, 6, 5, 3],
                 },
                 RockKind {
@@ -156,7 +151,6 @@ impl Default for Params {
                     cost: 3,
                     unlock: 30_000 * MICRO,
                     output: 12 * MICRO,
-                    delay: 300,
                     capacity: [9, 5, 2, 1],
                 },
             ],

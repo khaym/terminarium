@@ -427,8 +427,8 @@ mod tests {
     #[test]
     fn no_time_flows_before_the_run_starts() {
         // On the placement screen (game layer, run not committed) the clock must
-        // not run: the emergence delay and rock output are both anchored to the
-        // start, so nothing should age while the player is still composing.
+        // not run: rock output is anchored to the start, so nothing should age
+        // while the player is still composing.
         let mut app = app_with(State::new());
         app.on_resize(100, 30);
         assert!(!app.state.run_started());

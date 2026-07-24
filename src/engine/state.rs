@@ -28,7 +28,8 @@ pub struct State {
     pub score: u128,
     /// Placed rocks, all put down before the run starts.
     pub rocks: Vec<Rock>,
-    /// Ticks elapsed since the run started — the basis for emergence delay.
+    /// Ticks elapsed since the run started — the run clock (persisted as the
+    /// save's `age`), advanced once per `tick`.
     pub tick_count: u64,
     /// Whether the player has committed the placement and begun the run. The
     /// gate for placement/removal (only while false) and for the clock (only
@@ -88,13 +89,13 @@ impl State {
         self.started
     }
 
-    /// How many individuals of `species` the placed rocks can house right now.
-    /// A rock's housing counts only once it has emerged (`tick_count >= delay`);
-    /// this is the single place the emergence delay is applied.
+    /// How many individuals of `species` the placed rocks can house. Housing
+    /// counts from placement: capacity is a pure sum over the placed rocks and
+    /// never depends on elapsed time. Time gates no purchase — only currency
+    /// (the wall) and this capacity (the ceiling) do.
     pub fn capacity(&self, species: usize, p: &Params) -> u32 {
         self.rocks
             .iter()
-            .filter(|r| self.tick_count >= p.rock_kinds[r.kind].delay)
             .map(|r| p.rock_kinds[r.kind].capacity[species])
             .sum()
     }
@@ -167,9 +168,8 @@ impl State {
         let mut detritus: u128 = 0;
 
         // 1. Rock output — the run's only income until life is bought, and a
-        // steady source after. The emergence delay gates housing only (see
-        // `capacity`), never output, so detritus accrues from the moment a
-        // rock is placed.
+        // steady source after. Detritus accrues from the moment a rock is
+        // placed.
         for rock in &self.rocks {
             detritus += p.rock_kinds[rock.kind].output;
         }

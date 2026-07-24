@@ -522,7 +522,6 @@ mod tests {
                     cost: 1,
                     unlock: 0,
                     output: MICRO,
-                    delay: 0,
                     capacity: [1, 0, 0, 0],
                 },
                 RockKind {
@@ -530,7 +529,6 @@ mod tests {
                     cost: 1,
                     unlock: 5_000 * MICRO,
                     output: MICRO,
-                    delay: 0,
                     capacity: [1, 0, 0, 0],
                 },
             ],
