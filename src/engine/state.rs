@@ -11,7 +11,12 @@ pub struct Rock {
     pub slot: u8,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+/// Default anchor position: 800‰, the historical fixed column (width·4/5).
+pub const DEFAULT_ANCHOR_POS: u16 = 800;
+/// The largest valid anchor position; positions are a millipermille in 0..=999.
+pub const ANCHOR_POS_MAX: u16 = 999;
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct State {
     pub population: [u32; SPECIES],
     pub pool: [u128; SPECIES],
@@ -29,6 +34,31 @@ pub struct State {
     /// gate for placement/removal (only while false) and for the clock (only
     /// while true).
     pub started: bool,
+    /// Where the unlocked anchor sits, as a width-independent millipermille
+    /// (0..=999) of the pane; the renderer alone turns it into a column. Pure
+    /// scenery: `tick` never reads it, so it stays out of the economy. Meta-
+    /// persistent — like `score`, it survives `reset` (a new sea) and reload.
+    pub anchor_pos: u16,
+}
+
+impl Default for State {
+    /// A fresh sea: empty tank, and the anchor at its default column. Written by
+    /// hand (not derived) only so `anchor_pos` starts at `DEFAULT_ANCHOR_POS`
+    /// rather than 0, which is a valid left-edge position, not "unset".
+    fn default() -> Self {
+        Self {
+            population: [0; SPECIES],
+            pool: [0; SPECIES],
+            nutrient: 0,
+            collectable: 0,
+            currency: 0,
+            score: 0,
+            rocks: Vec::new(),
+            tick_count: 0,
+            started: false,
+            anchor_pos: DEFAULT_ANCHOR_POS,
+        }
+    }
 }
 
 impl State {
@@ -121,10 +151,12 @@ impl State {
     }
 
     /// Start a new sea: discard the run and return to placement, keeping only
-    /// the lifetime score (and thus the unlocks and budget derived from it).
+    /// the meta-persistent state — the lifetime score (and thus the unlocks and
+    /// budget derived from it) and the chosen anchor position.
     pub fn reset(&mut self) {
         *self = State {
             score: self.score,
+            anchor_pos: self.anchor_pos,
             ..State::default()
         };
     }

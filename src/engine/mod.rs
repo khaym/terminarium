@@ -4,4 +4,4 @@ mod params;
 mod state;
 
 pub use params::{Params, Ratio, RockKind, Species, MICRO, SLOTS, SPECIES};
-pub use state::{Rock, State};
+pub use state::{Rock, State, ANCHOR_POS_MAX, DEFAULT_ANCHOR_POS};

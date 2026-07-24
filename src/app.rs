@@ -4,7 +4,7 @@
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::engine::{Params, Species, State, SLOTS};
+use crate::engine::{Params, Species, State, ANCHOR_POS_MAX, SLOTS};
 
 /// Below either threshold the pane is a wallpaper; at or above both it is the
 /// game layer. Sized so a tmux side pane stays decorative and a zoomed pane
@@ -86,6 +86,11 @@ pub struct App {
     /// Whether a "start a new sea?" confirmation is awaiting a keypress. While
     /// set, buy input is suppressed until the prompt is answered.
     pub new_sea_pending: bool,
+    /// Whether the anchor-move mode owns input. A game-layer modal, the same in
+    /// placement and during a run: while set, h/l and the arrows move the anchor
+    /// and every other game key is swallowed. Toggled by 'a' once the score has
+    /// unlocked the anchor.
+    pub anchor_mode: bool,
     pub should_quit: bool,
     /// Multiplier applied to wall-clock time on the way into the engine — the
     /// one knob of the test-only fast mode. 1 is real time; the binary raises
@@ -93,6 +98,10 @@ pub struct App {
     /// new `App::new` argument through every test.
     pub time_scale: u64,
     tick_acc_ms: u64,
+    /// Current pane width, captured on every resize. The anchor-move step is
+    /// derived from it so one keypress moves the anchor at least one column at
+    /// the width the player is actually looking at.
+    width: u16,
 }
 
 impl App {
@@ -109,9 +118,11 @@ impl App {
             placement_cursor: SLOTS / 2,
             placement_kind: 0,
             new_sea_pending: false,
+            anchor_mode: false,
             should_quit: false,
             time_scale: 1,
             tick_acc_ms: 0,
+            width: 0,
         }
     }
 
@@ -120,6 +131,7 @@ impl App {
     /// new surplus is collected as it appears (see `drain_surplus`), so the
     /// HUD currency always moves live.
     pub fn on_resize(&mut self, width: u16, height: u16) {
+        self.width = width;
         let layer = layer_for(width, height);
         if layer == Layer::Game && self.layer == Layer::Wallpaper {
             let gained = self.state.collectable;
@@ -127,6 +139,12 @@ impl App {
             if gained > 0 {
                 self.flash = Some((gained, FLASH_FRAMES));
             }
+        }
+        // A wallpaper is a still picture that takes no input, so a grabbed
+        // anchor must not linger on it — shrinking to it releases the move mode.
+        // Re-expanding does not resume it; the player re-enters with 'a'.
+        if layer == Layer::Wallpaper {
+            self.anchor_mode = false;
         }
         self.layer = layer;
     }
@@ -140,6 +158,20 @@ impl App {
         }
         // A wallpaper accepts no game input — neither placement nor buying.
         if self.layer != Layer::Game {
+            return;
+        }
+        // Anchor-move mode is a game-layer modal, the same in placement and
+        // during a run: while active it owns h/l and the arrows and swallows
+        // every other game key. 'a' toggles it, gated on the score having
+        // unlocked the anchor.
+        if self.anchor_mode {
+            self.handle_anchor_mode(code);
+            return;
+        }
+        if code == KeyCode::Char('a') && self.anchor_unlocked() {
+            self.anchor_mode = true;
+            // A mode change dismisses any half-armed new-sea prompt.
+            self.new_sea_pending = false;
             return;
         }
         // Before the run is committed the game layer is the placement screen.
@@ -225,6 +257,45 @@ impl App {
         let n = unlocked.len() as i32;
         let next = (here + delta).rem_euclid(n) as usize;
         self.placement_kind = unlocked[next];
+    }
+
+    /// Anchor-move input: slide the anchor along the floor (h/l or arrows,
+    /// clamped to 0..=999), or leave the mode (Esc/Enter/a). Movement is
+    /// immediate — there is no staged position to commit or cancel, the same as
+    /// placing a reef. Every other key is swallowed so the mode owns input.
+    fn handle_anchor_mode(&mut self, code: KeyCode) {
+        let step = self.anchor_step();
+        match code {
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.state.anchor_pos = self.state.anchor_pos.saturating_sub(step);
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.state.anchor_pos = self
+                    .state
+                    .anchor_pos
+                    .saturating_add(step)
+                    .min(ANCHOR_POS_MAX);
+            }
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('a') => {
+                self.anchor_mode = false;
+            }
+            _ => {}
+        }
+    }
+
+    /// Position delta that moves the anchor at least one pane column per press.
+    /// The renderer places it at `left + width·pos/1000`, so a delta of
+    /// `ceil(1000/width)` shifts that column by at least one at the current
+    /// width (a wider pane needs a bigger delta to clear a whole column).
+    fn anchor_step(&self) -> u16 {
+        let w = u32::from(self.width.max(1));
+        1000u32.div_ceil(w) as u16
+    }
+
+    /// Whether the lifetime score has unlocked the anchor — the gate for
+    /// entering anchor-move mode, and for adding its key to the hint row.
+    pub fn anchor_unlocked(&self) -> bool {
+        self.state.score >= self.params.anchor_unlock
     }
 
     /// Wall-clock milliseconds → whole engine ticks (1 tick = 1 s); the
@@ -682,5 +753,182 @@ mod tests {
             app.on_frame();
         }
         assert_eq!(app.flash, None);
+    }
+
+    #[test]
+    fn anchor_mode_toggles_only_once_the_score_unlocks_the_anchor() {
+        let mut app = app_with(State::new());
+        app.on_resize(100, 30);
+        let none = KeyModifiers::NONE;
+
+        // Below the unlock 'a' does nothing.
+        assert!(app.state.score < app.params.anchor_unlock);
+        app.on_key(KeyCode::Char('a'), none);
+        assert!(!app.anchor_mode, "locked: 'a' cannot enter anchor mode");
+
+        // Once unlocked 'a' toggles the mode on, and again off.
+        app.state.score = app.params.anchor_unlock;
+        app.on_key(KeyCode::Char('a'), none);
+        assert!(app.anchor_mode, "unlocked: 'a' enters anchor mode");
+        app.on_key(KeyCode::Char('a'), none);
+        assert!(!app.anchor_mode, "'a' again leaves anchor mode");
+    }
+
+    #[test]
+    fn anchor_mode_moves_at_least_a_column_per_press_and_clamps() {
+        let mut app = app_with(State::new());
+        app.state.score = app.params.anchor_unlock;
+        let w = 100u16;
+        app.on_resize(w, 30);
+        let none = KeyModifiers::NONE;
+        // The renderer's column for a position (see wallpaper::draw_anchor).
+        let col = |pos: u16| u32::from(w) * u32::from(pos) / 1000;
+
+        app.on_key(KeyCode::Char('a'), none);
+        assert!(app.anchor_mode);
+
+        // One press moves the anchor by at least one pane column, either way.
+        let start = app.state.anchor_pos;
+        app.on_key(KeyCode::Right, none);
+        assert!(
+            col(app.state.anchor_pos) > col(start),
+            "one press right moves at least one column"
+        );
+        let here = app.state.anchor_pos;
+        app.on_key(KeyCode::Char('h'), none); // 'h' moves left
+        assert!(
+            col(here) > col(app.state.anchor_pos),
+            "one press left moves at least one column"
+        );
+
+        // Clamped to 0..=999: from the right edge right stays, from the left
+        // edge left stays.
+        app.state.anchor_pos = 999;
+        app.on_key(KeyCode::Char('l'), none);
+        assert_eq!(app.state.anchor_pos, 999, "clamped at the right edge");
+        app.state.anchor_pos = 0;
+        app.on_key(KeyCode::Left, none);
+        assert_eq!(app.state.anchor_pos, 0, "clamped at the left edge");
+    }
+
+    #[test]
+    fn anchor_mode_works_the_same_in_placement_and_during_a_run() {
+        let none = KeyModifiers::NONE;
+
+        // Placement phase (run not started).
+        let mut app = app_with(State::new());
+        app.state.score = app.params.anchor_unlock;
+        app.on_resize(100, 30);
+        assert!(!app.state.run_started());
+        app.on_key(KeyCode::Char('a'), none);
+        assert!(app.anchor_mode, "anchor mode opens on the placement screen");
+        let before = app.state.anchor_pos;
+        app.on_key(KeyCode::Left, none);
+        assert_ne!(app.state.anchor_pos, before, "and moves the anchor there");
+        app.on_key(KeyCode::Esc, none);
+        assert!(!app.anchor_mode, "Esc leaves the mode");
+
+        // During a live run.
+        let mut state = State::new();
+        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.start_run(&Params::default()));
+        state.score = 75_000 * MICRO;
+        let mut app = app_with(state);
+        app.on_resize(100, 30);
+        assert!(app.state.run_started());
+        app.on_key(KeyCode::Char('a'), none);
+        assert!(app.anchor_mode, "anchor mode opens during a run too");
+        let before = app.state.anchor_pos;
+        app.on_key(KeyCode::Right, none);
+        assert_ne!(app.state.anchor_pos, before, "and moves the anchor");
+        app.on_key(KeyCode::Enter, none);
+        assert!(!app.anchor_mode, "Enter leaves the mode");
+    }
+
+    #[test]
+    fn anchor_mode_swallows_other_game_keys() {
+        // A live run with money and housing, so a buy key would otherwise fire.
+        let mut state = State::new();
+        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.start_run(&Params::default()));
+        state.score = 75_000 * MICRO;
+        state.currency = 1_000 * MICRO;
+        let mut app = app_with(state);
+        app.on_resize(100, 30);
+        let none = KeyModifiers::NONE;
+
+        app.on_key(KeyCode::Char('a'), none);
+        assert!(app.anchor_mode);
+
+        // A buy key does not buy while the mode owns input.
+        app.on_key(KeyCode::Char('1'), none);
+        assert_eq!(
+            app.state.population[0], 0,
+            "buy is swallowed in anchor mode"
+        );
+        assert!(app.anchor_mode, "a swallowed key does not leave the mode");
+
+        // 'n' does not arm the new-sea prompt either.
+        app.on_key(KeyCode::Char('n'), none);
+        assert!(!app.new_sea_pending, "new sea is swallowed in anchor mode");
+        assert!(app.anchor_mode);
+    }
+
+    #[test]
+    fn entering_anchor_mode_dismisses_a_pending_new_sea_prompt() {
+        let mut state = State::new();
+        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.start_run(&Params::default()));
+        state.score = 75_000 * MICRO;
+        let mut app = app_with(state);
+        app.on_resize(100, 30);
+        let none = KeyModifiers::NONE;
+
+        app.on_key(KeyCode::Char('n'), none); // arm the prompt
+        assert!(app.new_sea_pending);
+        app.on_key(KeyCode::Char('a'), none); // enter anchor mode instead
+        assert!(app.anchor_mode);
+        assert!(!app.new_sea_pending, "the mode change dismisses the prompt");
+    }
+
+    #[test]
+    fn quit_works_even_in_anchor_mode() {
+        let mut state = State::new();
+        state.score = 75_000 * MICRO;
+        let mut app = app_with(state);
+        app.on_resize(100, 30);
+        app.on_key(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(app.anchor_mode);
+        app.on_key(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert!(
+            app.should_quit,
+            "quit is global, even while moving the anchor"
+        );
+    }
+
+    #[test]
+    fn shrinking_to_the_wallpaper_leaves_anchor_mode() {
+        // The wallpaper is a still picture that takes no input, so a grabbed
+        // anchor must not linger there — shrinking below the game size drops the
+        // mode. Re-expanding does not resume it (the player re-enters with 'a').
+        let mut state = State::new();
+        state.score = Params::default().anchor_unlock;
+        let mut app = app_with(state);
+        app.on_resize(100, 30);
+        app.on_key(KeyCode::Char('a'), KeyModifiers::NONE);
+        assert!(app.anchor_mode, "the mode is on at game size");
+
+        app.on_resize(40, 12);
+        assert_eq!(app.layer, Layer::Wallpaper);
+        assert!(
+            !app.anchor_mode,
+            "the wallpaper takes no input, so the anchor is released"
+        );
+
+        app.on_resize(100, 30);
+        assert!(
+            !app.anchor_mode,
+            "the mode does not resume on re-expand; 'a' re-enters it"
+        );
     }
 }

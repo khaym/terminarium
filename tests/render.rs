@@ -7,7 +7,7 @@
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use tui_game::app::{App, Phase};
-use tui_game::engine::{Params, Rock, State, MICRO, SLOTS};
+use tui_game::engine::{Params, Rock, State, DEFAULT_ANCHOR_POS, MICRO, SLOTS};
 use tui_game::ui;
 
 fn fixed_state() -> State {
@@ -24,6 +24,7 @@ fn fixed_state() -> State {
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     }
 }
 
@@ -207,6 +208,7 @@ fn palette_stays_in_indexed_256_space() {
         rocks: vec![Rock { kind: 1, slot: 1 }, Rock { kind: 2, slot: 3 }],
         tick_count: 300,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
 
     // (label, terminal, w, h): the live scene at both sizes, the placement
@@ -256,6 +258,7 @@ fn buy_highlight_needs_money_and_housing() {
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
     let terminal = rendered_terminal_with(state, 100, 30);
     let buffer = terminal.backend().buffer();
@@ -381,6 +384,7 @@ fn nine_reefs_fit_the_min_pane_without_overlap() {
         rocks: (0..SLOTS).map(|slot| Rock { kind: 0, slot }).collect(),
         tick_count: 30,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
     let (w, h) = (80u16, 20u16);
     let terminal = rendered_terminal_with(state, w, h);
@@ -428,6 +432,7 @@ fn algae_population_shows_one_column_each() {
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
     let (w, h) = (40u16, 12u16);
     let terminal = rendered_terminal_with(state, w, h);
@@ -467,6 +472,7 @@ fn algae_visible_at_edge_slots_in_narrow_panes() {
                 rocks: vec![Rock { kind: 0, slot }],
                 tick_count: 30,
                 started: true,
+                anchor_pos: DEFAULT_ANCHOR_POS,
             };
             let h = 12u16;
             let terminal = rendered_terminal_with(state, w, h);
@@ -510,6 +516,7 @@ fn plankton_occupy_distinct_cells() {
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
     let mut columns_seen: HashSet<u16> = HashSet::new();
     for frame in [0u64, 3, 8, 17, 50, 100] {
@@ -547,6 +554,7 @@ fn fish_keep_distinct_lanes() {
         rocks: vec![Rock { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
     for frame in [0u64, 8, 17, 50, 123] {
         let terminal = rendered_at_frame(state.clone(), 100, 30, frame);
@@ -601,6 +609,7 @@ fn fish_patrol_follows_its_rock() {
             rocks: vec![Rock { kind: 0, slot }],
             tick_count: 30,
             started: true,
+            anchor_pos: DEFAULT_ANCHOR_POS,
         };
         let terminal = rendered_at_frame(state, 100, 30, frame);
         let buffer = terminal.backend().buffer();
@@ -660,6 +669,7 @@ fn rock_five_sea_draws_the_full_population() {
             .collect(),
         tick_count: 30,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
     let (w, h) = (100u16, 30u16);
 
@@ -960,6 +970,102 @@ fn new_sea_prompt_shows_when_pending() {
     );
 }
 
+/// The anchor-move action is discoverable: once the score unlocks the anchor,
+/// its key joins the hint row — on both the placement screen and the running
+/// HUD. Below the unlock the hint stays clear of it, so a key the player cannot
+/// yet use is never advertised.
+#[test]
+fn anchor_hint_appears_only_once_unlocked() {
+    let unlock = Params::default().anchor_unlock;
+
+    // Placement screen (run not started): locked just below the unlock, then at
+    // it.
+    let mut locked = State::new();
+    locked.score = unlock - 1;
+    let joined = rows_of(&rendered_terminal_with(locked, 100, 30), 100, 30).join("\n");
+    assert!(
+        !joined.contains("[a] anchor"),
+        "placement: no anchor hint below the unlock: {joined}"
+    );
+    assert!(
+        joined.contains("[s] start"),
+        "placement: the base hint still reads: {joined}"
+    );
+
+    let mut unlocked = State::new();
+    unlocked.score = unlock;
+    let joined = rows_of(&rendered_terminal_with(unlocked, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("[a] anchor"),
+        "placement: the anchor hint appears at the unlock: {joined}"
+    );
+
+    // Running HUD (run started).
+    let mut locked = fixed_state();
+    locked.score = unlock - 1;
+    locked.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(locked, 100, 30), 100, 30).join("\n");
+    assert!(
+        !joined.contains("[a] anchor"),
+        "run: no anchor hint below the unlock: {joined}"
+    );
+    assert!(
+        joined.contains("[1-4] buy"),
+        "run: the base hint still reads: {joined}"
+    );
+
+    let mut unlocked = fixed_state();
+    unlocked.score = unlock;
+    unlocked.collectable = 0;
+    let joined = rows_of(&rendered_terminal_with(unlocked, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("[a] anchor"),
+        "run: the anchor hint appears at the unlock: {joined}"
+    );
+}
+
+/// While the anchor-move mode owns input, both screens replace their hint row
+/// with the mode's own line, so the keys that apply while moving read where the
+/// normal keys were — and the normal hint yields, on the placement screen and
+/// the running HUD alike.
+#[test]
+fn anchor_move_mode_replaces_the_hint_row() {
+    let unlock = Params::default().anchor_unlock;
+
+    // Placement screen in anchor mode.
+    let mut state = State::new();
+    state.score = unlock;
+    let mut app = App::new(state, Params::default());
+    app.frame = 8;
+    app.anchor_mode = true;
+    let joined = rows_of(&rendered_terminal_of(app, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("moving the anchor - [</>] slide, [enter] done"),
+        "placement: the move-mode line shows: {joined}"
+    );
+    assert!(
+        !joined.contains("[enter] place"),
+        "placement: the normal hint yields to the mode line: {joined}"
+    );
+
+    // Running HUD in anchor mode.
+    let mut state = fixed_state();
+    state.score = unlock;
+    state.collectable = 0;
+    let mut app = App::new(state, Params::default());
+    app.frame = 8;
+    app.anchor_mode = true;
+    let joined = rows_of(&rendered_terminal_of(app, 100, 30), 100, 30).join("\n");
+    assert!(
+        joined.contains("moving the anchor - [</>] slide, [enter] done"),
+        "run: the move-mode line shows: {joined}"
+    );
+    assert!(
+        !joined.contains("[1-4] buy"),
+        "run: the normal hint yields to the mode line: {joined}"
+    );
+}
+
 /// Composing a coral reef (run not started): the placed coral shows its real
 /// body color, and the cursor ghost shows the selected kind's shape in the
 /// calm-gold preview tone — the ghost's shape carries the kind, since its color
@@ -1094,6 +1200,7 @@ fn reef_variants_render_distinct_colors() {
         rocks: vec![Rock { kind: 1, slot: 1 }, Rock { kind: 2, slot: 3 }],
         tick_count: 300,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
     let terminal = rendered_terminal_with(state, 100, 30);
     let buffer = terminal.backend().buffer();
@@ -1129,6 +1236,7 @@ fn kelp_sea_shows_dugong() {
         rocks: vec![Rock { kind: 2, slot: 2 }],
         tick_count: 300,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
     let terminal = rendered_terminal_with(state, 100, 30);
     let buffer = terminal.backend().buffer();
@@ -1175,6 +1283,7 @@ fn dugong_fully_drawn_in_narrow_pane() {
         }], // edge slot: worst case for the clamp
         tick_count: 300,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     };
     for frame in [0u64, 5, 8, 20, 50, 100] {
         let terminal = rendered_at_frame(state.clone(), 40, 12, frame);
@@ -1283,6 +1392,7 @@ fn whale_only_sea() -> State {
         rocks: vec![],
         tick_count: 0,
         started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
     }
 }
 
@@ -1494,15 +1604,14 @@ fn anchor_appears_only_after_its_score_unlock() {
     );
 }
 
-/// The anchor's fixed 0.8-width column was chosen for the old 5-slot grid, where
-/// it fell between the two right-hand slots and cleared every rock body. Under
-/// the 9-slot grid its column now lands on slot 7's reef. At the minimum game
-/// pane (80x20) the anchor spans columns 62..=66 and slot 7's body covers
-/// 65..=67, so the two right anchor cells share a floor column with that body;
-/// the anchor draws before the rocks, so the reef overdraws it there (it reads
-/// as behind the reef). The other 14 pixel-art cells still render. This is an
-/// accepted narrow-grid degradation until #15 makes the anchor position
-/// configurable — it does not remove or move the anchor.
+/// The overlap rule holds at the default anchor position (800‰): that column
+/// lands on slot 7's reef. At the minimum game pane (80x20) the anchor spans
+/// columns 62..=66 and slot 7's body covers 65..=67, so the two right anchor
+/// cells share a floor column with that body; the anchor draws before the rocks,
+/// so the reef overdraws it there (it reads as behind the reef). The other 14
+/// pixel-art cells still render. #15 lets the player move the anchor off a
+/// crowding reef, but the overlap rule itself is unchanged — a reef sharing the
+/// anchor's column still draws in front.
 #[test]
 fn anchor_overdrawn_by_the_slot_seven_reef_at_min_pane() {
     use ratatui::style::Color;
@@ -1571,5 +1680,93 @@ fn anchor_omitted_in_a_short_pane() {
     assert!(
         anchor_cells(6) > 0,
         "the anchor shows once there is headroom"
+    );
+}
+
+/// The anchor sits where its stored position (#15) puts it: its floor column is
+/// `left + width·pos/1000`, so the default 800‰ lands it two columns left of
+/// 0.8·width (the old fixed spot, unchanged), and a smaller position moves the
+/// whole glyph left. The leftmost anchor cell sits two columns left of center.
+#[test]
+fn anchor_follows_its_stored_position() {
+    let leftmost = |pos: u16| -> u16 {
+        let mut state = State::new();
+        state.score = 75_000 * MICRO; // unlocked
+        state.started = true;
+        state.anchor_pos = pos;
+        let (w, h) = (40u16, 12u16);
+        let terminal = rendered_terminal_with(state, w, h);
+        let buffer = terminal.backend().buffer();
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| is_anchor_color(buffer.cell((x, y)).expect("cell").style().fg))
+            .map(|(x, _)| x)
+            .min()
+            .expect("the anchor is drawn")
+    };
+
+    // center = width·pos/1000; the glyph's left cell is two columns before it.
+    assert_eq!(
+        leftmost(DEFAULT_ANCHOR_POS),
+        40 * DEFAULT_ANCHOR_POS / 1000 - 2,
+        "the default position keeps the historical 0.8-width column"
+    );
+    assert_eq!(
+        leftmost(200),
+        40 * 200 / 1000 - 2,
+        "a smaller position moves the anchor left"
+    );
+    assert!(
+        leftmost(200) < leftmost(DEFAULT_ANCHOR_POS),
+        "moving the stored position moves the drawn anchor"
+    );
+}
+
+/// While the player is moving it, the anchor is relit in the grabbed tone (222,
+/// the same game.rs uses for a grabbed rock): its own iron/highlight/rust
+/// palette yields entirely to the grabbed gold, its silhouette unchanged. Idle,
+/// it wears its own palette and shows no grabbed tone. Anchor-move mode is a
+/// game-layer modal (a wallpaper takes no input, so it can never be armed
+/// there), so this renders on the game layer and counts only the tank rows
+/// above the HUD — the HUD money also uses 222, and excluding it keeps the
+/// grabbed cells unambiguous.
+#[test]
+fn anchor_in_move_mode_is_relit() {
+    use ratatui::style::Color;
+
+    let counts = |anchor_mode: bool| -> (usize, usize) {
+        let mut state = State::new();
+        state.score = 75_000 * MICRO; // unlocked
+        state.started = true;
+        let mut app = App::new(state, Params::default());
+        app.anchor_mode = anchor_mode;
+        let (w, h) = (100u16, 30u16);
+        // Game layer: the tank sits above the 5-row HUD, so its rows are 0..25.
+        // The anchor draws in the tank; the HUD money (also 222) is excluded.
+        let tank_h = h - 5;
+        let terminal = rendered_terminal_of(app, w, h);
+        let buffer = terminal.backend().buffer();
+        let palette = (0..tank_h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| is_anchor_color(buffer.cell((x, y)).expect("cell").style().fg))
+            .count();
+        let grabbed = (0..tank_h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(222))
+            })
+            .count();
+        (palette, grabbed)
+    };
+
+    let (idle_palette, idle_grabbed) = counts(false);
+    assert!(idle_palette > 0, "idle: the anchor wears its own palette");
+    assert_eq!(idle_grabbed, 0, "idle: no grabbed tone");
+
+    let (moving_palette, moving_grabbed) = counts(true);
+    assert_eq!(moving_palette, 0, "moving: the palette is fully relit");
+    assert_eq!(
+        moving_grabbed, 16,
+        "moving: all 16 anchor cells wear the grabbed tone"
     );
 }

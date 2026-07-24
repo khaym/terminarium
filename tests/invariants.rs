@@ -2,7 +2,7 @@
 //! work/economy-model.md. Parameter values are placeholders; these tests are
 //! the constraints they must keep satisfying while being tuned.
 
-use tui_game::engine::{Params, RockKind, Species, State, MICRO};
+use tui_game::engine::{Params, RockKind, Species, State, ANCHOR_POS_MAX, MICRO};
 
 /// A tank with every trophic level active and non-trivial stocks, so that
 /// every branch of the tick (uptake, predation, decay, recycling) is live.
@@ -576,8 +576,9 @@ fn collect_accumulates_lifetime_score() {
     assert_eq!(s.currency, 150 * MICRO);
 }
 
-/// `reset` (new sea) keeps only the lifetime score; everything else about the
-/// run returns to the initial state.
+/// `reset` (new sea) keeps only the meta-persistent state — the lifetime score
+/// and the chosen anchor position; everything else about the run returns to the
+/// initial state.
 #[test]
 fn reset_keeps_score_and_clears_the_run() {
     let p = Params::default();
@@ -587,12 +588,14 @@ fn reset_keeps_score_and_clears_the_run() {
     s.advance(200, &p);
     s.collect();
     s.population = [1, 1, 0, 0];
+    s.anchor_pos = 250; // moved off the default column
     let kept = s.score;
     assert!(kept > 0);
 
     s.reset();
 
     assert_eq!(s.score, kept, "score survives a new sea");
+    assert_eq!(s.anchor_pos, 250, "the anchor position survives a new sea");
     assert_eq!(s.population, [0, 0, 0, 0]);
     assert_eq!(s.pool, [0; 4]);
     assert_eq!(s.nutrient, 0);
@@ -601,6 +604,47 @@ fn reset_keeps_score_and_clears_the_run() {
     assert!(s.rocks.is_empty());
     assert_eq!(s.tick_count, 0);
     assert!(!s.run_started());
+}
+
+/// The anchor position is pure scenery: `tick` neither reads nor writes it, so
+/// the economy is identical whatever the anchor's placement (experience-
+/// direction principle 4 — the placement is a picture, never a simulation
+/// input). Two runs advanced from opposite anchor positions end in the same
+/// state once the (untouched) anchor field is set aside.
+#[test]
+fn anchor_position_stays_out_of_the_economy() {
+    let p = Params::default();
+    let base = {
+        let mut s = populated_state();
+        assert!(s.place_rock(0, 0, &p));
+        assert!(s.start_run(&p));
+        s
+    };
+
+    let mut left = base.clone();
+    left.anchor_pos = 0;
+    let mut right = base.clone();
+    right.anchor_pos = ANCHOR_POS_MAX;
+
+    left.advance(5_000, &p);
+    right.advance(5_000, &p);
+
+    assert_eq!(
+        left.anchor_pos, 0,
+        "tick leaves the anchor position untouched"
+    );
+    assert_eq!(
+        right.anchor_pos, ANCHOR_POS_MAX,
+        "tick leaves the anchor position untouched"
+    );
+
+    // Aside from the anchor field, the two states are identical — the anchor
+    // fed nothing into the simulation.
+    left.anchor_pos = right.anchor_pos;
+    assert_eq!(
+        left, right,
+        "the economy is independent of the anchor position"
+    );
 }
 
 /// Placement is gated by the unlock score: a kind whose unlock the score has

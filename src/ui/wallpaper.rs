@@ -31,9 +31,10 @@
 //! decoration outside the economy: gated on the living-population biomass, it
 //! crosses in only 1-in-K deterministic frame windows so a sighting stays a
 //! rare, reproducible treat. The sunken-anchor scenery (`draw_anchor`) is a
-//! score-unlocked landmark, derived from score alone so it costs no save field.
-//! Both only read their gate quantity (living biomass, score); neither writes
-//! state nor touches the save.
+//! score-unlocked landmark the player slides along the floor (App's anchor-move
+//! mode), so its position is a persisted field (#15) — but it stays outside the
+//! economy: the renderer only reads it, `tick` never does. The whale reads only
+//! its gate quantity (living biomass). Neither visitor is a simulation input.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -162,6 +163,10 @@ const WHALE_RIGHT: [&str; 5] = [
 const ANCHOR_IRON: u8 = 66;
 const ANCHOR_HIGHLIGHT: u8 = 109;
 const ANCHOR_RUST: u8 = 94;
+/// The tone the whole anchor is relit in while the player is moving it — the
+/// grabbed gold game.rs uses for a grabbed rock, so "picked up, shape kept"
+/// reads the same across both.
+const ANCHOR_GRABBED: u8 = 222;
 
 /// Panes shorter than this omit the anchor: the sprite is four rows tall and
 /// needs a little headroom, and the guard also keeps the bottom-anchored row
@@ -788,16 +793,16 @@ fn draw_whale(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color)
     }
 }
 
-/// The sunken-anchor landmark, once the lifetime score has unlocked it. It sits
-/// at a fixed floor column, 0.8 of the pane width — a position chosen for the
-/// old 5-slot grid, where it fell between the two right-hand slots and cleared
-/// every rock body. Under the 9-slot grid that column lands on slot 7's reef:
-/// they share a column or two, and — because the anchor draws before the rocks —
-/// the reef overdraws it there, so the anchor reads as sitting behind that reef
-/// rather than punching through it. This is an accepted degradation until #15
-/// makes the anchor position configurable. It hosts no events. Bottom-anchored
-/// to the floor, four rows tall. Derived from score alone, so it adds no save
-/// field.
+/// The sunken-anchor landmark, once the lifetime score has unlocked it. Its
+/// floor column follows the player-chosen position (`state.anchor_pos`, a
+/// width-independent millipermille); the millipermille → column conversion
+/// lives here, since absolute coordinates are the renderer's. The default 800‰
+/// reproduces the old fixed 0.8-width column. While the player is moving it
+/// (`app.anchor_mode`) the whole glyph is relit in the grabbed tone, the same
+/// "picked up, shape kept" cue game.rs uses for a grabbed rock. The anchor draws
+/// before the rocks, so a reef sharing its column overdraws it and it reads as
+/// sitting behind that reef — moving it aside is exactly what the mode is for.
+/// It hosts no events. Bottom-anchored to the floor, four rows tall.
 fn draw_anchor(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
     // Guard the height before the bottom-anchored row math (`floor + 1 - rows`),
     // which would underflow if a 4-row sprite were placed in a shorter pane.
@@ -807,7 +812,8 @@ fn draw_anchor(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
     if app.state.score < app.params.anchor_unlock {
         return;
     }
-    let center = (i64::from(area.width) * 4) / 5; // 0.8 * width, on slot 7's reef (9-slot grid)
+    let center =
+        i64::from(area.left()) + (i64::from(area.width) * i64::from(app.state.anchor_pos)) / 1000;
     let floor = area.bottom() - 1;
     let rows = ANCHOR.len() as u16;
     for (r, cells) in ANCHOR.iter().enumerate() {
@@ -820,7 +826,15 @@ fn draw_anchor(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
             } else {
                 water
             };
-            let style = Style::new().fg(Color::Indexed(cell.fg)).bg(bg);
+            // Relit to the grabbed tone while being moved; otherwise its own
+            // iron/highlight/rust palette. Only the foreground changes, so the
+            // silhouette is unchanged.
+            let fg = if app.anchor_mode {
+                Color::Indexed(ANCHOR_GRABBED)
+            } else {
+                Color::Indexed(cell.fg)
+            };
+            let style = Style::new().fg(fg).bg(bg);
             // Cell column 2 sits on the center, so the 5-wide anchor is centered.
             put(buf, area, center - 2 + col as i64, y, cell.sym, style);
         }

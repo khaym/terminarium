@@ -5,9 +5,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::engine::{Params, Rock, State, SLOTS, SPECIES};
+use crate::engine::{Params, Rock, State, ANCHOR_POS_MAX, SLOTS, SPECIES};
 
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 
 /// Sanity bound on parsed populations. Legitimate play tops out near ~620 per
 /// species (the cost curve saturates u128 there), while HUD cost display is
@@ -64,13 +64,15 @@ pub fn serialize(state: &State, saved_at: u64) -> String {
         .join(",");
     format!(
         "v={VERSION}\nsaved_at={saved_at}\npopulation={populations}\npool={pools}\n\
-         nutrient={}\ncollectable={}\ncurrency={}\nscore={}\nrocks={rocks}\nage={}\nstarted={}\n",
+         nutrient={}\ncollectable={}\ncurrency={}\nscore={}\nrocks={rocks}\nage={}\nstarted={}\n\
+         anchor={}\n",
         state.nutrient,
         state.collectable,
         state.currency,
         state.score,
         state.tick_count,
         u8::from(state.started),
+        state.anchor_pos,
     )
 }
 
@@ -90,6 +92,7 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
     let mut rocks: Option<Vec<Rock>> = None;
     let mut tick_count: Option<u64> = None;
     let mut started: Option<bool> = None;
+    let mut anchor_pos: Option<u16> = None;
 
     for line in text.lines() {
         let (key, value) = line.split_once('=')?;
@@ -105,6 +108,7 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
             "rocks" => set_once(&mut rocks, parse_rocks(value, params)?)?,
             "age" => set_once(&mut tick_count, value.parse().ok()?)?,
             "started" => set_once(&mut started, parse_flag(value)?)?,
+            "anchor" => set_once(&mut anchor_pos, value.parse().ok()?)?,
             _ => return None,
         }
     }
@@ -113,6 +117,11 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
         return None;
     }
     if population?.iter().any(|&n| n > MAX_POPULATION) {
+        return None;
+    }
+    // A position is a millipermille in 0..=999; anything past the pane could not
+    // arise in play, so it is corruption.
+    if anchor_pos? > ANCHOR_POS_MAX {
         return None;
     }
     let state = State {
@@ -125,6 +134,7 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
         rocks: rocks?,
         tick_count: tick_count?,
         started: started?,
+        anchor_pos: anchor_pos?,
     };
     // Reject forms a legitimate playthrough could not produce: a rock of a kind
     // the score has not unlocked, a placement over the score's budget, or a
@@ -274,6 +284,9 @@ mod tests {
             rocks: vec![Rock { kind: 0, slot: 0 }, Rock { kind: 0, slot: 2 }],
             tick_count: 137,
             started: true,
+            // A non-default position, off the anchor's home column, so the
+            // round trip exercises a value that is neither 0 nor the default.
+            anchor_pos: 250,
         }
     }
 
@@ -465,13 +478,39 @@ mod tests {
     }
 
     #[test]
-    fn v2_saves_are_rejected() {
-        // The version is a breaking bump: a v2 save must be set aside, not
-        // read as if it were current.
+    fn v3_saves_are_rejected() {
+        // The version is a breaking bump to v4 for the anchor position: a v3
+        // save (which had no anchor key) must be set aside, not read as if it
+        // were current — reading it as v4 would invent a position it never held.
         let p = Params::default();
         let good = serialize(&sample_state(), 1);
         assert!(parse(&good, &p).is_some());
-        assert!(parse(&good.replace("v=3", "v=2"), &p).is_none());
+        assert!(parse(&good.replace("v=4", "v=3"), &p).is_none());
+    }
+
+    #[test]
+    fn anchor_position_out_of_range_is_rejected() {
+        // The anchor position is a millipermille, 0..=999: 999 is the last valid
+        // column-fraction, 1000 is past the pane and cannot arise in play.
+        let p = Params::default();
+        let good = serialize(&sample_state(), 1);
+        assert!(parse(&good, &p).is_some());
+        assert!(parse(&good.replace("anchor=250", "anchor=999"), &p).is_some());
+        assert!(parse(&good.replace("anchor=250", "anchor=1000"), &p).is_none());
+    }
+
+    #[test]
+    fn a_save_missing_the_anchor_key_is_rejected() {
+        // Every key is required (the strict all-or-nothing rule): a save without
+        // the anchor position is not one of ours.
+        let p = Params::default();
+        let good = serialize(&sample_state(), 1);
+        let without = good
+            .lines()
+            .filter(|l| !l.starts_with("anchor="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(parse(&without, &p).is_none());
     }
 
     #[test]
@@ -562,7 +601,7 @@ mod tests {
         let p = Params::default();
         let good = serialize(&sample_state(), 1);
         assert!(parse(&good, &p).is_some());
-        assert!(parse(&good.replace("v=3", "v=1"), &p).is_none());
+        assert!(parse(&good.replace("v=4", "v=1"), &p).is_none());
         assert!(parse(&format!("{good}extra=1\n"), &p).is_none());
         assert!(parse(&good.replace("population=3,1,0,0", "population=3,1,0"), &p).is_none());
         assert!(parse(

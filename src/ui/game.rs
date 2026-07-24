@@ -38,6 +38,11 @@ const MARKER: Color = Color::Indexed(236);
 /// (what backspace would lift), its shape still telling its kind.
 const GRABBED: Color = Color::Indexed(222);
 
+/// The hint row while anchor-move mode owns input — the same on both screens,
+/// naming only the keys that apply while moving, so it reads where the normal
+/// keys were.
+const ANCHOR_MODE_HINT: &str = "moving the anchor - [</>] slide, [enter] done";
+
 pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
     if area.height <= HUD_HEIGHT + 2 || area.width < 20 {
         wallpaper::render(app, area, buf);
@@ -127,9 +132,14 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
     };
     buf.set_stringn(left, y + 3, line, width, style);
 
-    // The last row is the key hint, or the new-sea confirmation when armed —
-    // a pending prompt takes the row so the choice reads where the keys did.
-    if app.new_sea_pending {
+    // The last row is the key hint — or a line that takes its place: the
+    // anchor-move line while that mode owns input, or the new-sea confirmation
+    // when armed (the two modes are mutually exclusive, anchor judged first).
+    // The base hint gains the anchor key once the score unlocks it, so the
+    // action is discoverable where the player looks for keys.
+    if app.anchor_mode {
+        buf.set_stringn(left, y + 4, ANCHOR_MODE_HINT, width, Style::new().fg(HINT));
+    } else if app.new_sea_pending {
         buf.set_stringn(
             left,
             y + 4,
@@ -138,13 +148,12 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
             Style::new().fg(TEXT),
         );
     } else {
-        buf.set_stringn(
-            left,
-            y + 4,
-            "[1-4] buy   [n] new sea   [q] quit",
-            width,
-            Style::new().fg(HINT),
-        );
+        let hint = if app.anchor_unlocked() {
+            "[1-4] buy   [n] new sea   [a] anchor   [q] quit"
+        } else {
+            "[1-4] buy   [n] new sea   [q] quit"
+        };
+        buf.set_stringn(left, y + 4, hint, width, Style::new().fg(HINT));
     }
 }
 
@@ -339,13 +348,17 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
         ),
     }
 
-    buf.set_stringn(
-        left,
-        area.bottom() - 1,
-        "[</>] move  [^/v] kind  [enter] place  [bksp] remove  [s] start",
-        width,
-        Style::new().fg(HINT),
-    );
+    // The bottom row is the placement hint — replaced by the anchor-move line
+    // while that mode owns input. The base hint gains the anchor key once the
+    // score unlocks it, mirroring the running HUD's hint.
+    let hint = if app.anchor_mode {
+        ANCHOR_MODE_HINT
+    } else if app.anchor_unlocked() {
+        "[</>] move  [^/v] kind  [enter] place  [bksp] remove  [s] start  [a] anchor"
+    } else {
+        "[</>] move  [^/v] kind  [enter] place  [bksp] remove  [s] start"
+    };
+    buf.set_stringn(left, area.bottom() - 1, hint, width, Style::new().fg(HINT));
 }
 
 /// Whole currency units; the micro fixed-point precision is an engine detail
