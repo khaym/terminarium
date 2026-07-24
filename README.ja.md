@@ -1,6 +1,6 @@
 <p align="center">
   <img src="assets/logo.svg" width="480"
-       alt="terminarium — 昼の海の青を背景に、8bit ピクセルフォントの名前の横を左向きに泳ぐ大きな魚">
+       alt="terminarium — 8bit ピクセルフォントの名前の横を左向きに泳ぐ大きな魚">
 </p>
 
 <p align="center">

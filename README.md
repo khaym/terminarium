@@ -1,6 +1,6 @@
 <p align="center">
   <img src="assets/logo.svg" width="480"
-       alt="terminarium — a big fish swimming left beside the name in an 8-bit pixel font, on the noon-sea blue">
+       alt="terminarium — a big fish swimming left beside the name in an 8-bit pixel font">
 </p>
 
 <p align="center">
