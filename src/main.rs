@@ -8,9 +8,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{Local, Timelike};
 use crossterm::event::{self, Event, KeyEventKind};
-use tui_game::app::{App, Phase};
-use tui_game::engine::Params;
-use tui_game::{cli, save, ui};
+use terminarium::app::{App, Phase};
+use terminarium::engine::Params;
+use terminarium::{cli, save, ui};
 
 const POLL_TIMEOUT: Duration = Duration::from_millis(50);
 const FRAME_INTERVAL: Duration = Duration::from_millis(200);

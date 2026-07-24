@@ -15,9 +15,7 @@ const VERSION: u32 = 4;
 /// game layer, so such a file is treated as corrupt.
 const MAX_POPULATION: u32 = 100_000;
 
-/// `$XDG_DATA_HOME` (or `~/.local/share`) `/tui-game/save.txt`. The directory
-/// follows the working package name and moves when the game gets its real
-/// name.
+/// `$XDG_DATA_HOME` (or `~/.local/share`) `/terminarium/save.txt`.
 pub fn default_path() -> PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -28,7 +26,7 @@ pub fn default_path() -> PathBuf {
                 .unwrap_or_default();
             home.join(".local/share")
         });
-    base.join("tui-game/save.txt")
+    base.join("terminarium/save.txt")
 }
 
 /// Which save file to use for the given time scale. Real time (scale 1) uses
@@ -293,7 +291,7 @@ mod tests {
     /// Each test gets its own directory so parallel tests never collide.
     fn temp_save_path(name: &str) -> PathBuf {
         std::env::temp_dir()
-            .join(format!("tui-game-save-tests-{}", std::process::id()))
+            .join(format!("terminarium-save-tests-{}", std::process::id()))
             .join(name)
             .join("save.txt")
     }

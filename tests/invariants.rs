@@ -2,7 +2,7 @@
 //! work/economy-model.md. Parameter values are placeholders; these tests are
 //! the constraints they must keep satisfying while being tuned.
 
-use tui_game::engine::{Params, RockKind, Species, State, ANCHOR_POS_MAX, MICRO};
+use terminarium::engine::{Params, RockKind, Species, State, ANCHOR_POS_MAX, MICRO};
 
 /// A tank with every trophic level active and non-trivial stocks, so that
 /// every branch of the tick (uptake, predation, decay, recycling) is live.

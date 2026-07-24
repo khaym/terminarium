@@ -6,9 +6,9 @@
 
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
-use tui_game::app::{App, Phase};
-use tui_game::engine::{Params, Rock, State, DEFAULT_ANCHOR_POS, MICRO, SLOTS};
-use tui_game::ui;
+use terminarium::app::{App, Phase};
+use terminarium::engine::{Params, Rock, State, DEFAULT_ANCHOR_POS, MICRO, SLOTS};
+use terminarium::ui;
 
 fn fixed_state() -> State {
     State {
