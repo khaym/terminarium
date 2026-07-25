@@ -80,7 +80,8 @@ pub struct Params {
     /// Cost multiplier per owned unit.
     pub cost_growth: Ratio,
     /// Rock kinds available to place, ordered by unlock score. Higher score
-    /// unlocks later kinds.
+    /// unlocks later kinds. A rock stores its kind as an index into this list,
+    /// so its order is the save format (see `content::KINDS`).
     pub rock_kinds: Vec<RockKind>,
     /// Placement budget schedule: `(score threshold, budget)` pairs in
     /// ascending threshold order. The budget available at a score is the one
@@ -131,29 +132,10 @@ impl Default for Params {
             recycle: Ratio::new(3, 10),
             base_cost: [100 * MICRO, 450 * MICRO, 900 * MICRO, 4_000 * MICRO],
             cost_growth: Ratio::new(112, 100),
-            rock_kinds: vec![
-                RockKind {
-                    name: "rock",
-                    cost: 1,
-                    unlock: 0,
-                    output: 3 * MICRO,
-                    capacity: [4, 3, 2, 1],
-                },
-                RockKind {
-                    name: "coral",
-                    cost: 2,
-                    unlock: 12_000 * MICRO,
-                    output: 12 * MICRO,
-                    capacity: [2, 6, 5, 3],
-                },
-                RockKind {
-                    name: "kelp",
-                    cost: 3,
-                    unlock: 30_000 * MICRO,
-                    output: 12 * MICRO,
-                    capacity: [9, 5, 2, 1],
-                },
-            ],
+            // The kinds and their order come from the content manifest, where
+            // each kind's economy row sits beside its look — so adding a kind
+            // never edits this file.
+            rock_kinds: crate::content::rock_kinds(),
             budget_steps: vec![
                 (0, 1),
                 (12_000 * MICRO, 2),
