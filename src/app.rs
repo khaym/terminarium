@@ -12,6 +12,12 @@ use crate::engine::{Params, Species, State, ANCHOR_POS_MAX, SLOTS};
 pub const GAME_MIN_WIDTH: u16 = 80;
 pub const GAME_MIN_HEIGHT: u16 = 20;
 
+/// Length of one animation frame, in milliseconds (~5 fps). The unit of every
+/// frame count here (`FLASH_FRAMES`, `App::frame`), so it lives beside them
+/// rather than in the binary: the event loop and the scenario harness both drive
+/// frames at this rhythm, and one definition keeps the two in step.
+pub const FRAME_INTERVAL_MS: u64 = 200;
+
 /// How long the collect flash stays visible, in animation frames (~5 fps).
 const FLASH_FRAMES: u8 = 15;
 

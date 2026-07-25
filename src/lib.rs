@@ -8,5 +8,6 @@ pub mod app;
 pub mod cli;
 pub mod content;
 pub mod engine;
+pub mod harness;
 pub mod save;
 pub mod ui;

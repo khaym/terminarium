@@ -1,0 +1,30 @@
+# demo: the opening loop of a run, played from a script instead of a keyboard.
+#
+# Drops the founding reef, starts the run, waits for its sediment to pay for the
+# first algae, buys it, and lets photosynthesis run — then looks at that same sea
+# in both layers: the full-screen game and a thin side pane.
+#
+#   cargo run --example capture -- tests/scenarios/demo.txt
+#
+# Values are raw engine integers, so 100000000 is 100.00 of currency.
+
+resize 100x30              # the playable size; arriving here collects the pile
+key enter                  # drop the founding rock on the mid-floor slot
+key s                      # commit the placement: the run and its clock begin
+expect started true
+expect rocks == 1
+
+wait 10000                 # ten seconds of rock output
+expect score >= 1          # the reef earned while we watched
+expect collectable == 0    # a watched pane collects as it appears
+expect currency >= 100000000   # the opening wall: the first algae costs 100.00
+
+key 1                      # buy that algae
+wait 20000                 # and let it photosynthesize
+expect score >= 21000000   # more than the bare reef had made by the buy
+capture full               # the full-screen game: HUD over a living tank
+
+resize 40x12               # shrink to a tmux side pane: wallpaper, no HUD
+wait 5000                  # the pile grows untouched — that is the peek reward
+expect collectable >= 1
+capture pane
