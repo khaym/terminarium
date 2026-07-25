@@ -41,7 +41,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use crate::app::{App, Phase};
-use crate::content;
+use crate::content::{self, creatures::SwimmerDef};
 use crate::engine::{Rock, MICRO, SLOTS};
 
 /// Water background and surface-glow colors for a time-of-day phase — the
@@ -66,11 +66,9 @@ fn surface_color(phase: Phase) -> Color {
     }
 }
 
-/// Colors of the sprites that look the same on every reef. A sprite whose look
-/// varies by rock kind (the rock body, its algae, its apex individual) takes its
-/// color from that kind's definition in `crate::content` instead.
-const FISH: Color = Color::Indexed(215);
-const PLANKTON: Color = Color::Indexed(122);
+/// Colors of the scenery that is not alive. Every creature takes its color from
+/// its own definition in `crate::content::creatures`, reached through its host
+/// reef's kind, as does the rock body.
 const DETRITUS: Color = Color::Indexed(101);
 const SEDIMENT: Color = Color::Indexed(94);
 
@@ -86,11 +84,6 @@ const MAX_ALGAE: u64 = 20;
 const MAX_PLANKTON: u64 = 15;
 const MAX_SMALL_FISH: u64 = 12;
 const MAX_BIG_FISH: u64 = 7;
-
-/// Patrol radius (cells either side of the host rock) by fish size. Small fish
-/// stay tight to the reef; big fish sweep a wider, statelier beat.
-const SMALL_RADIUS: i64 = 5;
-const BIG_RADIUS: i64 = 10;
 
 /// The visiting whale — a pale blue-gray (152) that reads on every water
 /// background (observed, work/render-observations.md).
@@ -395,8 +388,8 @@ fn draw_sediment(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
 }
 
 /// Algae attach to the sides of their host rock (never dead-center, so the rock
-/// still reads), each frond in its own in-pane flank column. The glyph and
-/// color come from the rock kind's definition.
+/// still reads), each frond in its own in-pane flank column. Which frond grows
+/// there comes from the creature the host kind houses at the base tier.
 fn draw_algae(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color) {
     if app.state.rocks.is_empty() {
         return;
@@ -409,7 +402,7 @@ fn draw_algae(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color)
     for i in 0..count {
         let rock = &app.state.rocks[(i % n) as usize];
         let ordinal = i / n; // this rock's k-th frond
-        let variant = &content::def(rock.kind).algae;
+        let algae = content::def(rock.kind).algae;
         let center = slot_center_x(area, rock.slot);
         // One in-pane flank column per frond; injective in the ordinal, so N
         // fronds show as N columns wherever the pane has room. `None` means no
@@ -428,11 +421,11 @@ fn draw_algae(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color)
                 x,
                 y,
                 if sway {
-                    variant.fronds[0]
+                    algae.fronds[0]
                 } else {
-                    variant.fronds[1]
+                    algae.fronds[1]
                 },
-                Style::new().fg(variant.color).bg(water),
+                Style::new().fg(algae.color).bg(water),
             );
         }
     }
@@ -441,7 +434,7 @@ fn draw_algae(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color)
 /// Plankton gather around the reef, each in its own in-pane column fanned out
 /// from a rock and drifting vertically. Distinct columns mean two plankton on a
 /// rock never share a cell at any frame, yet the drift still reads as life, not
-/// a fixed cluster.
+/// a fixed cluster. Which drifter it is comes from the host kind's definition.
 fn draw_plankton(
     app: &App,
     area: Rect,
@@ -451,7 +444,6 @@ fn draw_plankton(
     h: u64,
     water: Color,
 ) {
-    const DOTS: [&str; 4] = ["⠁", "⠂", "⠄", "⠈"];
     if app.state.rocks.is_empty() {
         return;
     }
@@ -461,6 +453,7 @@ fn draw_plankton(
     for i in 0..count {
         let rock = &app.state.rocks[(i % n) as usize];
         let ordinal = i / n;
+        let plankton = content::def(rock.kind).plankton;
         let center = slot_center_x(area, rock.slot);
         // One in-pane column per plankton (fan out from the rock).
         let Some(x) = colony_column(area, i64::from(center), ordinal) else {
@@ -473,8 +466,8 @@ fn draw_plankton(
             area,
             x,
             y,
-            DOTS[(i % 4) as usize],
-            Style::new().fg(PLANKTON).bg(water),
+            plankton.dots[(i % plankton.dots.len() as u64) as usize],
+            Style::new().fg(plankton.color).bg(water),
         );
     }
 }
@@ -517,8 +510,10 @@ fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64, water:
     let n = rocks.len() as u64;
     let small = u64::from(app.state.population[2]).min(MAX_SMALL_FISH);
     let big = u64::from(app.state.population[3]).min(MAX_BIG_FISH);
-    // Small fish patrol a tight window low near their reef; big fish sweep a
-    // wider window and range higher — each bounded to its assigned rock.
+    // Which swimmer each tier is comes from the host kind's definition, and the
+    // definition carries its own beat: small fish patrol a tight window low near
+    // their reef, an apex individual sweeps a wider window and ranges higher.
+    // Each stays bounded to its assigned rock.
     for i in 0..small {
         let rock = &rocks[(i % n) as usize];
         patrol(
@@ -528,21 +523,12 @@ fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64, water:
             h,
             rock,
             i / n,
-            "><>",
-            "<><",
-            1,
-            SMALL_RADIUS,
-            FISH,
-            true,
+            content::def(rock.kind).small,
             water,
         );
     }
     for i in 0..big {
         let rock = &rocks[(i % n) as usize];
-        // The apex individual takes on its host reef's character: a dugong over
-        // kelp, a big fish elsewhere. Same length (6 cells) as the fish, so the
-        // patrol clamp keeps it fully drawn even in a thin pane.
-        let v = &content::def(rock.kind).big;
         patrol(
             area,
             buf,
@@ -550,24 +536,19 @@ fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64, water:
             h,
             rock,
             i / n,
-            v.right,
-            v.left,
-            v.slowdown,
-            BIG_RADIUS,
-            v.color,
-            false,
+            content::def(rock.kind).big,
             water,
         );
     }
 }
 
-/// One fish on a bounded patrol around its host rock: it glides right to the
-/// window edge, then back left, staying within the rock center ± the species
-/// radius. The window is clamped so the whole glyph fits, so the fish is always
-/// drawn fully — never partially clipped. `reef_bias` folds the lane into the
-/// lower half so smaller fish keep near the reef. `ordinal` (this rock's k-th
-/// fish of its size) sets a distinct lane and a distinct patrol phase, so two
-/// fish of a kind on one rock never share a cell.
+/// One swimmer on a bounded patrol around its host rock: it glides right to the
+/// window edge, then back left, staying within the rock center ± the creature's
+/// radius. The window is clamped so the whole glyph fits, so the swimmer is
+/// always drawn fully — never partially clipped. The creature's `reef_bias` folds
+/// the lane into the lower half so smaller tenants keep near the reef.
+/// `ordinal` (this rock's k-th swimmer of its tier) sets a distinct lane and a
+/// distinct patrol phase, so two of a tier on one rock never share a cell.
 #[allow(clippy::too_many_arguments)]
 fn patrol(
     area: Rect,
@@ -576,15 +557,10 @@ fn patrol(
     h: u64,
     rock: &Rock,
     ordinal: u64,
-    right_glyph: &str,
-    left_glyph: &str,
-    slowdown: u64,
-    radius: i64,
-    color: Color,
-    reef_bias: bool,
+    swimmer: &SwimmerDef,
     water: Color,
 ) {
-    let len = right_glyph.len() as i64;
+    let len = swimmer.right.len() as i64;
     let min_anchor = i64::from(area.left());
     let max_anchor = i64::from(area.right()) - len; // last x where the whole glyph fits
     if max_anchor < min_anchor {
@@ -592,23 +568,23 @@ fn patrol(
     }
     // Patrol window: rock center ± radius, clamped so the glyph never clips.
     let center = i64::from(slot_center_x(area, rock.slot));
-    let left = (center - radius).max(min_anchor);
-    let right = (center + radius).min(max_anchor);
+    let left = (center - swimmer.radius).max(min_anchor);
+    let right = (center + swimmer.radius).min(max_anchor);
     if right < left {
         return; // window falls off the fittable strip
     }
     let travel = right - left;
     let (x, glyph) = if travel == 0 {
-        (left, right_glyph)
+        (left, swimmer.right)
     } else {
         let period = (2 * travel) as u64;
         // Phase offset per fish keeps same-rock fish out of lockstep, so even
         // two sharing a lane never coincide every frame.
-        let t = ((frame / slowdown + ordinal) % period) as i64;
+        let t = ((frame / swimmer.slowdown + ordinal) % period) as i64;
         if t < travel {
-            (left + t, right_glyph) // gliding right
+            (left + t, swimmer.right) // gliding right
         } else {
-            (left + 2 * travel - t, left_glyph) // gliding back left
+            (left + 2 * travel - t, swimmer.left) // gliding back left
         }
     };
 
@@ -616,14 +592,14 @@ fn patrol(
     // glyphs never share a cell. Small fish fold into the lower lanes (near the
     // reef); big fish range over the full height.
     let lane = (h - 2).max(1);
-    let row = if reef_bias {
+    let row = if swimmer.reef_bias {
         let lower = (lane / 2).max(1);
         (lane - 1) - (ordinal % lower)
     } else {
         ordinal % lane
     };
     let y = area.top() + 1 + row as u16;
-    buf.set_string(x as u16, y, glyph, Style::new().fg(color).bg(water));
+    buf.set_string(x as u16, y, glyph, Style::new().fg(swimmer.color).bg(water));
 }
 
 /// Whether a whale crosses in `window`, and if so its heading (`true` =

@@ -1,24 +1,32 @@
 //! Reef kind content: what a rock kind *is*, one file per kind.
 //!
-//! A kind is an economy row (what it costs, when it unlocks, what it sheds, who
-//! it houses) plus the sprite variants that give it a look of its own. Both
-//! halves live in the same file — `rock.rs`, `coral.rs`, `kelp.rs` — so adding a
-//! kind is one new definition file plus its name in the `kinds!` manifest below,
-//! with no edit to the engine or the renderer. `Params::default` builds its
-//! economy rows from the manifest and the wallpaper reads its variants from it,
-//! so the two halves of a kind can never drift apart.
+//! A kind is an economy row (what it costs, when it unlocks, what it sheds, how
+//! much it houses), the look of its own rock body, and the creature it houses at
+//! each of the four economy tiers. All of it lives in the same file — `rock.rs`,
+//! `coral.rs`, `kelp.rs` — so adding a kind is one new definition file plus its
+//! name in the `kinds!` manifest below, with no edit to the engine or the
+//! renderer. `Params::default` builds its economy rows from the manifest and the
+//! wallpaper reads the look from it, so the two halves of a kind can never drift
+//! apart.
+//!
+//! The tenants themselves are content of their own, one file per creature in
+//! `creatures/`. A kind names them by reference, so the creature two kinds share
+//! (the plain big fish, over both rock and coral) is one definition read twice.
 //!
 //! A definition is plain Rust consts, so it is compiled in: nothing to ship
 //! beside the binary and nothing to parse (or fail to parse) at startup.
 //!
-//! Colors follow the same ownership rule as the rest of a definition: a tint
-//! only one kind wears lives in that kind's file, and a tint shared by two or
-//! more kinds lives here. Sprites with no per-kind look (small fish, plankton,
-//! detritus, sediment) are not content — their colors stay in the wallpaper.
+//! Colors follow the same ownership rule as the rest of a definition: the tint a
+//! creature wears lives in that creature's file, and the tint of a kind's rock
+//! body lives in that kind's. Scenery that is not alive (detritus, sediment, the
+//! water itself) is not content — its colors stay in the wallpaper.
 
 use ratatui::style::Color;
 
+use self::creatures::{DotDef, FrondDef, SwimmerDef};
 use crate::engine::RockKind;
+
+pub mod creatures;
 
 /// Declares the kind modules and builds the manifest from one list, so
 /// registering a kind and placing it in the unlock order cannot drift apart —
@@ -41,52 +49,30 @@ macro_rules! kinds {
 // The manifest: the one shared line a new kind adds itself to (append only).
 kinds!(rock, coral, kelp);
 
-/// The plain big fish, worn by every kind that has no apex of its own — a warm
-/// orange, clear of the small fish's lighter tone.
-const BIG_FISH: Color = Color::Indexed(209);
-
-/// One reef kind, whole: its economy row and its three sprite variants. The
-/// engine reads the economy, the wallpaper reads the variants, and neither
-/// needs to know how many kinds exist.
+/// One reef kind, whole: its economy row, its rock body, and its four tenants.
+/// The engine reads the economy, the wallpaper reads the body and follows the
+/// tenant references, and neither needs to know how many kinds exist.
 pub struct ReefDef {
     /// The row this kind contributes to `Params::rock_kinds`.
     pub economy: RockKind,
-    /// Look of the base species growing on this kind.
-    pub algae: AlgaeVariant,
     /// Look of this kind's rock body.
     pub rock: RockVariant,
-    /// Look of the apex individual this kind hosts.
-    pub big: BigVariant,
+    /// The creature this kind houses at each economy tier, in
+    /// `State::population` order. References into `creatures`, so a kind picks
+    /// its tenants rather than restating them — two kinds hosting the same
+    /// creature share the one definition, and retuning it moves both reefs.
+    pub algae: &'static FrondDef,
+    pub plankton: &'static DotDef,
+    pub small: &'static SwimmerDef,
+    pub big: &'static SwimmerDef,
 }
 
-/// Look of the base species (algae) for a rock kind. Carried by the kind's own
-/// definition, so a new kind's base layer is data in a new file, not renderer
-/// code. Each kind's base layer looks different, so a reef reads by its
-/// greenery alone.
-pub struct AlgaeVariant {
-    /// Two sway frames of the frond glyph.
-    pub fronds: [&'static str; 2],
-    pub color: Color,
-}
-
-/// Look of the rock body itself — one of the three variants a kind's definition
-/// carries. The glyph tells kinds apart even in the dim placement ghost, where
-/// color does not; color carries the difference for a placed reef.
+/// Look of the rock body itself — the one part of a kind's look that is scenery
+/// rather than a creature. The glyph tells kinds apart even in the dim placement
+/// ghost, where color does not; color carries the difference for a placed reef.
 pub struct RockVariant {
     /// Three body glyphs drawn left / center / right of the rock column.
     pub body: [&'static str; 3],
-    pub color: Color,
-}
-
-/// Look of the apex individual a kind hosts. A big fish over rock and coral; a
-/// slower, tan dugong over kelp — the top species takes on its reef's
-/// character. Keyed only by the host rock's kind, so it stays a pure function
-/// of (state, frame) like every other sprite.
-pub struct BigVariant {
-    pub right: &'static str,
-    pub left: &'static str,
-    /// Frames per column step; higher is slower (the dugong ambles).
-    pub slowdown: u64,
     pub color: Color,
 }
 

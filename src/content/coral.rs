@@ -3,13 +3,11 @@
 
 use ratatui::style::Color;
 
-use super::{AlgaeVariant, BigVariant, ReefDef, RockVariant, BIG_FISH};
+use super::{creatures, ReefDef, RockVariant};
 use crate::engine::{RockKind, MICRO};
 
 /// Coral rock body — a warm rose, well clear of the orange fish tones.
 const CORAL: Color = Color::Indexed(174);
-/// Base algae tint for the coral reef — a denser teal-green than plain rock.
-const CORAL_ALGAE: Color = Color::Indexed(37);
 
 pub const DEF: ReefDef = ReefDef {
     economy: RockKind {
@@ -19,20 +17,15 @@ pub const DEF: ReefDef = ReefDef {
         output: 12 * MICRO,
         capacity: [2, 6, 5, 3],
     },
-    // a denser, teal-tinged base layer
-    algae: AlgaeVariant {
-        fronds: ["{", "}"],
-        color: CORAL_ALGAE,
-    },
     // branches spreading up from a stem
     rock: RockVariant {
         body: ["╱", "█", "╲"],
         color: CORAL,
     },
-    big: BigVariant {
-        right: "><)))>",
-        left: "<(((><",
-        slowdown: 2,
-        color: BIG_FISH,
-    },
+    // a denser base layer; the swimmers above it are the plain ones, shared with
+    // the founding sea rather than restated here
+    algae: &creatures::teal_fronds::DEF,
+    plankton: &creatures::plankton::DEF,
+    small: &creatures::small_fish::DEF,
+    big: &creatures::big_fish::DEF,
 };
