@@ -196,16 +196,22 @@ fn palette_stays_in_indexed_256_space() {
     let in_space =
         |c: Option<Color>| matches!(c, None | Some(Color::Reset) | Some(Color::Indexed(_)));
 
-    // A coral + kelp sea exercises every new reef color at once: coral and
-    // kelp rock bodies, both base-algae tints, a big fish and a dugong.
+    // A swatch of the reef palette rather than a reachable placement: coral,
+    // kelp, and grotto side by side bring in every reef color at once — three
+    // rock bodies, three base-algae tints, and every tenant each houses (one per
+    // reef at each tier, since a tier's individuals are dealt round-robin).
     let reefs = State {
-        population: [4, 0, 0, 2],
+        population: [4, 3, 3, 3],
         pool: [0; 4],
         nutrient: 0,
         collectable: 0,
         currency: 0,
-        score: 30_000 * MICRO,
-        rocks: vec![Rock { kind: 1, slot: 1 }, Rock { kind: 2, slot: 3 }],
+        score: 40_000 * MICRO,
+        rocks: vec![
+            Rock { kind: 1, slot: 1 },
+            Rock { kind: 2, slot: 3 },
+            Rock { kind: 3, slot: 5 },
+        ],
         tick_count: 300,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -1215,6 +1221,77 @@ fn reef_variants_render_distinct_colors() {
     assert!(present(Color::Indexed(70)), "kelp fronds show");
     assert!(present(Color::Indexed(180)), "the dugong shows over kelp");
     assert!(present(Color::Indexed(209)), "a big fish shows over coral");
+}
+
+/// The grotto reef draws its own tenants, never the shared ones: coralline
+/// fronds at the base (red where every other reef's greenery is green), a shrimp
+/// swarm at the small tier, and a squid as its apex. Its rock body deliberately
+/// shares the base rock's gray (245) — the greenery carries the difference — so
+/// the body is pinned by its cave-mouth glyphs instead of its color. A valid
+/// normal-play state: grotto unlocked (score >= 40000), its cost 3 within budget
+/// 3, every tier bought to the housing it provides.
+#[test]
+fn grotto_sea_shows_coralline_fronds_shrimp_and_squid() {
+    use ratatui::style::Color;
+
+    let full = State {
+        population: [2, 3, 7, 2], // grotto's housing, filled
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 40_000 * MICRO,
+        rocks: vec![Rock { kind: 3, slot: 4 }],
+        tick_count: 300,
+        started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
+    };
+    let terminal = rendered_terminal_with(full.clone(), 100, 30);
+    let buffer = terminal.backend().buffer();
+    let cells = || (0..30u16).flat_map(|y| (0..100u16).map(move |x| (x, y)));
+    let count = |c: Color| -> usize {
+        cells()
+            .filter(|&(x, y)| buffer.cell((x, y)).expect("cell").style().fg == Some(c))
+            .count()
+    };
+
+    // Every individual bought at a tier is drawn whole: 7 shrimp of 2 cells and
+    // 2 squid of 5. (The base layer's frond heights are hashed, so its cell count
+    // is not fixed — only that the tint is on screen.)
+    assert!(count(Color::Indexed(131)) > 0, "coralline fronds show");
+    assert_eq!(
+        count(Color::Indexed(217)),
+        14,
+        "all 7 shrimp show, each whole"
+    );
+    assert_eq!(
+        count(Color::Indexed(110)),
+        10,
+        "both squid show, each whole"
+    );
+    // The tenants are the grotto's own, so no shared tint appears anywhere.
+    assert_eq!(count(Color::Indexed(37)), 0, "no coral teal fronds");
+    assert_eq!(count(Color::Indexed(215)), 0, "no plain small fish");
+    assert_eq!(count(Color::Indexed(209)), 0, "no plain big fish");
+    // The cave mouth's center opening, in the gray the body shares with rock.
+    assert!(
+        cells().any(|(x, y)| {
+            let cell = buffer.cell((x, y)).expect("cell");
+            cell.symbol() == "▀" && cell.style().fg == Some(Color::Indexed(245))
+        }),
+        "the grotto body wears rock's gray on its own glyphs"
+    );
+
+    // Bare of tenants, nothing overdraws the flanks: the whole cave mouth reads.
+    let bare = State {
+        population: [0; 4],
+        ..full
+    };
+    let rows = rows_of(&rendered_terminal_with(bare, 100, 30), 100, 30);
+    assert!(
+        rows.iter().any(|row| row.contains("▛▀▜")),
+        "the grotto body draws a cave mouth: {rows:?}"
+    );
 }
 
 /// The apex individual takes on its host reef's character: over kelp it is a

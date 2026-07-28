@@ -1,0 +1,223 @@
+# grotto: the fourth reef, from its unlock to a sea full of shrimp.
+#
+# Plays the story of #28 — found a sea and ride it to score 40,000, rebuild on
+# the grotto, buy every tier to its housing, then look at that sea in all four
+# lights and in both panes. Ends past the budget-5 wall with a rock beside the
+# grotto, the pair that shares a body color.
+#
+#   cargo run --example capture -- tests/scenarios/grotto.txt
+#
+# Values are raw engine integers, so 40000000000 is score 40,000. Waits are
+# compressed simulation time, and a buy key is a no-op while the species is
+# unaffordable or already housed — so a long wait then one sweep of 1/2/3/4 fills
+# a sea, and a repeat sweep costs nothing.
+
+resize 100x30              # the playable size: the HUD and every key live here
+key enter                  # the founding rock on the mid-floor slot
+key s
+expect started true
+expect rocks == 1
+
+# --- the climb to the grotto's unlock -------------------------------------
+wait 2000000               # a bare reef sheds slowly: ~2 score/s
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 3
+key 3
+key 4
+wait 2000000
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 3
+key 3
+key 4                      # the founding sea is now full: [4, 3, 2, 1]
+wait 3100000               # a filled rock sea makes ~7 score/s
+expect score >= 40000000000   # the grotto is unlocked
+expect score <= 74999999999   # and the budget-5 wall is still ahead
+
+# --- composing the grotto sea ---------------------------------------------
+key n
+key y                      # a new sea: the score (and its unlocks) survives
+phase day
+key down                   # cycle to the last unlocked kind — the grotto
+capture ghost              # the ghost's shape names the kind; its color cannot
+key enter                  # drop it on the mid-floor slot
+key s
+expect started true
+expect rocks == 1
+
+# Fill the grotto's housing ([2, 3, 7, 2] — 14 individuals, ~19,000 currency).
+wait 3000000
+key 1
+key 1
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+wait 500000
+key 1
+key 1
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+
+# --- the grotto sea in every light ----------------------------------------
+# Full housing, mid-floor: the body's cave mouth, the red coralline base, the
+# shrimp swarm and the squid, over each of the four waters.
+phase dawn
+capture center-dawn
+phase day
+capture center-day
+phase dusk
+capture center-dusk
+phase night
+capture center-night
+
+# The same sea in a thin side pane: the three body glyphs still fit, and the base
+# layer clips to width/4.
+phase day
+resize 40x12
+capture center-pane-day
+
+# --- an edge slot, at night, in the thin pane ------------------------------
+resize 100x30              # back to the game layer, the only one taking keys
+wait 4000000               # earn past the budget-5 wall
+expect score >= 75000000000
+key n
+key y
+key right
+key right
+key right
+key right                  # slot 8: the pane's right edge
+key down                   # the grotto again
+key enter
+key s
+expect rocks == 1
+wait 3000000
+key 1
+key 1
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+wait 500000
+key 1
+key 1
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+phase day
+capture edge-day           # the HUD reads the housing this pane cannot show
+phase night
+resize 40x12
+capture edge-pane-night
+
+# --- the grotto beside a rock ---------------------------------------------
+# Budget 5 seats both: the two bodies share a gray (245), so what tells them
+# apart is the shape of the body and the color of the base layer.
+resize 100x30
+key n
+key y
+key down                   # the grotto on the mid-floor slot
+key enter
+key left                   # one slot to its left
+key up                     # back around to the founding rock
+key enter
+key s
+expect rocks == 2
+wait 4000000
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+key 4
+wait 500000
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+key 4
+phase day
+capture rock-and-grotto-day

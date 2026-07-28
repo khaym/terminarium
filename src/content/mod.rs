@@ -3,11 +3,11 @@
 //! A kind is an economy row (what it costs, when it unlocks, what it sheds, how
 //! much it houses), the look of its own rock body, and the creature it houses at
 //! each of the four economy tiers. All of it lives in the same file — `rock.rs`,
-//! `coral.rs`, `kelp.rs` — so adding a kind is one new definition file plus its
-//! name in the `kinds!` manifest below, with no edit to the engine or the
-//! renderer. `Params::default` builds its economy rows from the manifest and the
-//! wallpaper reads the look from it, so the two halves of a kind can never drift
-//! apart.
+//! `coral.rs`, `kelp.rs`, `grotto.rs` — so adding a kind is one new definition
+//! file plus its name in the `kinds!` manifest below, with no edit to the engine
+//! or the renderer. `Params::default` builds its economy rows from the manifest
+//! and the wallpaper reads the look from it, so the two halves of a kind can
+//! never drift apart.
 //!
 //! The tenants themselves are content of their own, one file per creature in
 //! `creatures/`. A kind names them by reference, so the creature two kinds share
@@ -47,7 +47,7 @@ macro_rules! kinds {
 }
 
 // The manifest: the one shared line a new kind adds itself to (append only).
-kinds!(rock, coral, kelp);
+kinds!(rock, coral, kelp, grotto);
 
 /// One reef kind, whole: its economy row, its rock body, and its four tenants.
 /// The engine reads the economy, the wallpaper reads the body and follows the

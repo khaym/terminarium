@@ -23,11 +23,14 @@
 use ratatui::style::Color;
 
 pub mod big_fish;
+pub mod coralline_fronds;
 pub mod dugong;
 pub mod kelp_blades;
 pub mod plankton;
+pub mod shrimp;
 pub mod small_fish;
 pub mod sparse_fronds;
+pub mod squid;
 pub mod teal_fronds;
 
 /// A frond rooted to its host rock: the base species (algae) of a reef. Every

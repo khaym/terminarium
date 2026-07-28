@@ -495,13 +495,18 @@ fn whale_gate_sits_between_full_budget_three_and_five_reefs() {
 fn budget_five_reef_out_collects_the_best_budget_three() {
     const WINDOW: u64 = 5_000;
     let t3 = 30_000 * MICRO;
+    let t4 = 40_000 * MICRO;
     let t5 = 75_000 * MICRO;
 
-    // The three ways to spend budget 3 (every kind is unlocked by score 30,000).
+    // Every way to spend budget 3 in full: the three compositions open once kelp
+    // unlocks at score 30,000, and the grotto from its own unlock at 40,000 —
+    // still budget 3, since the schedule's next step is the 75,000 wall. A
+    // partial spend houses strictly less, so it can never be the best.
     let kelp = steady_collection_over_window(&[(2, 0)], t3, WINDOW);
     let coral_rock = steady_collection_over_window(&[(1, 0), (0, 1)], t3, WINDOW);
     let rock_x3 = steady_collection_over_window(&[(0, 0), (0, 1), (0, 2)], t3, WINDOW);
-    let best_three = kelp.max(coral_rock).max(rock_x3);
+    let grotto = steady_collection_over_window(&[(3, 0)], t4, WINDOW);
+    let best_three = kelp.max(coral_rock).max(rock_x3).max(grotto);
 
     // Budget 5 buys kelp+coral — the composition the new wall unlocks.
     let kelp_coral = steady_collection_over_window(&[(2, 0), (1, 1)], t5, WINDOW);
@@ -510,7 +515,7 @@ fn budget_five_reef_out_collects_the_best_budget_three() {
         kelp_coral > best_three,
         "kelp+coral (budget 5) must out-collect the best budget-3 reef: \
          {kelp_coral} vs best {best_three} \
-         (kelp {kelp}, coral+rock {coral_rock}, rock×3 {rock_x3})"
+         (kelp {kelp}, coral+rock {coral_rock}, rock×3 {rock_x3}, grotto {grotto})"
     );
 }
 
@@ -705,6 +710,31 @@ fn budget_grows_in_steps_and_gates_placement() {
     assert!(s.place_rock(0, 0, &p));
     assert!(!s.place_rock(0, 1, &p), "budget 1 admits only one rock");
     assert_eq!(s.rocks.len(), 1);
+}
+
+/// Invariant — every kind is placeable: a kind costing more than the largest
+/// budget the schedule ever grants can never be placed at any score, so it is
+/// content no player can reach. Nothing else catches that. The sprite-cap test
+/// enumerates only reachable reefs, so an unplaceable kind contributes no
+/// population to bound, and no render test can build a state holding it — the
+/// suite stays green while the kind sits dead in the manifest.
+#[test]
+fn every_kind_costs_within_the_largest_budget() {
+    let p = Params::default();
+    let max_budget = p
+        .budget_steps
+        .iter()
+        .map(|&(_, budget)| budget)
+        .max()
+        .expect("a budget schedule");
+    for rk in &p.rock_kinds {
+        assert!(
+            rk.cost <= max_budget,
+            "{} costs {} while the budget never passes {max_budget}: it can never be placed",
+            rk.name,
+            rk.cost
+        );
+    }
 }
 
 /// The placement gates close once the run starts, and the seed is granted
