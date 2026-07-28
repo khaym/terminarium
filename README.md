@@ -16,6 +16,7 @@
   <a href="#how-to-play">How to play</a> &bull;
   <a href="#terminal-setup">Terminal setup</a> &bull;
   <a href="#development">Development</a> &bull;
+  <a href="#release-history">Release history</a> &bull;
   <a href="#license">License</a>
 </p>
 
@@ -135,6 +136,13 @@ cargo run    # run from source
 
 The economy is deterministic and readable in the tests: its rules live in
 `tests/invariants.rs`, both rendering layers in `tests/render.rs`.
+
+## Release history
+
+- **v0.2.0** — A fourth reef, the grotto: shrimp crowd its cave mouth under a
+  gliding squid. Unlocks at score 40,000.
+- **v0.1.0** — First release: the two-layer sea, the economy, three reefs, the
+  whale and the anchor.
 
 ## License
 
