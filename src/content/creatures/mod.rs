@@ -22,10 +22,13 @@
 
 use ratatui::style::Color;
 
+pub mod anglerfish;
 pub mod big_fish;
 pub mod coralline_fronds;
 pub mod dugong;
 pub mod kelp_blades;
+pub mod lantern_moss;
+pub mod noctiluca;
 pub mod plankton;
 pub mod shrimp;
 pub mod small_fish;
@@ -64,4 +67,8 @@ pub struct SwimmerDef {
     /// the reef. An apex swimmer ranges over the full height instead.
     pub reef_bias: bool,
     pub color: Color,
+    /// One cell of the body worn in another color — the anglerfish's lure.
+    /// The index counts cells from the left of `right`; a left-facing draw
+    /// mirrors it. `None` is a single-color swimmer.
+    pub accent: Option<(usize, Color)>,
 }

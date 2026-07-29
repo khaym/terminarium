@@ -15,4 +15,5 @@ pub const DEF: SwimmerDef = SwimmerDef {
     radius: 10,
     reef_bias: false,
     color: DUGONG,
+    accent: None,
 };

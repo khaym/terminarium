@@ -3,11 +3,11 @@
 //! A kind is an economy row (what it costs, when it unlocks, what it sheds, how
 //! much it houses), the look of its own rock body, and the creature it houses at
 //! each of the four economy tiers. All of it lives in the same file — `rock.rs`,
-//! `coral.rs`, `kelp.rs`, `grotto.rs` — so adding a kind is one new definition
-//! file plus its name in the `kinds!` manifest below, with no edit to the engine
-//! or the renderer. `Params::default` builds its economy rows from the manifest
-//! and the wallpaper reads the look from it, so the two halves of a kind can
-//! never drift apart.
+//! `coral.rs`, `kelp.rs`, `grotto.rs`, `lantern.rs` — so adding a kind is one new
+//! definition file plus its name in the `kinds!` manifest below, with no edit to
+//! the engine or the renderer. `Params::default` builds its economy rows from
+//! the manifest and the wallpaper reads the look from it, so the two halves of
+//! a kind can never drift apart.
 //!
 //! The tenants themselves are content of their own, one file per creature in
 //! `creatures/`. A kind names them by reference, so the creature two kinds share
@@ -47,7 +47,7 @@ macro_rules! kinds {
 }
 
 // The manifest: the one shared line a new kind adds itself to (append only).
-kinds!(rock, coral, kelp, grotto);
+kinds!(rock, coral, kelp, grotto, lantern);
 
 /// One reef kind, whole: its economy row, its rock body, and its four tenants.
 /// The engine reads the economy, the wallpaper reads the body and follows the
@@ -105,5 +105,35 @@ mod tests {
             names.starts_with(&["rock", "coral", "kelp"]),
             "kind indices are save identities and must stay put, got {names:?}"
         );
+    }
+
+    /// `SwimmerDef::accent`'s index counts cells of `right`, and the renderer's
+    /// left-facing mirror (`cells - 1 - index`) only lands correctly if `right`
+    /// and `left` are the same length in cells — true of every shipped swimmer.
+    /// An out-of-range index degrades to no accent rather than panicking
+    /// (`patrol`, src/ui/wallpaper.rs), but shipped content should never
+    /// actually take that degrade path, so both preconditions are pinned here
+    /// across every kind's small and big tenants (the only tiers that are
+    /// swimmers).
+    #[test]
+    fn swimmer_defs_have_matching_cell_counts_and_in_range_accents() {
+        for def in KINDS {
+            for swimmer in [def.small, def.big] {
+                let right_cells = swimmer.right.chars().count();
+                let left_cells = swimmer.left.chars().count();
+                assert_eq!(
+                    right_cells, left_cells,
+                    "{}: right/left cell counts must match ({right_cells} vs {left_cells})",
+                    def.economy.name
+                );
+                if let Some((index, _)) = swimmer.accent {
+                    assert!(
+                        index < right_cells,
+                        "{}: accent index {index} is out of range for {right_cells} cells",
+                        def.economy.name
+                    );
+                }
+            }
+        }
     }
 }

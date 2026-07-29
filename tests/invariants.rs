@@ -502,6 +502,8 @@ fn budget_five_reef_out_collects_the_best_budget_three() {
     // unlocks at score 30,000, and the grotto from its own unlock at 40,000 —
     // still budget 3, since the schedule's next step is the 75,000 wall. A
     // partial spend houses strictly less, so it can never be the best.
+    // (#33: lantern, cost 1, cannot enter this list either — its unlock is
+    // 100,000, past the 75,000 wall that is budget 3's own ceiling here.)
     let kelp = steady_collection_over_window(&[(2, 0)], t3, WINDOW);
     let coral_rock = steady_collection_over_window(&[(1, 0), (0, 1)], t3, WINDOW);
     let rock_x3 = steady_collection_over_window(&[(0, 0), (0, 1), (0, 2)], t3, WINDOW);

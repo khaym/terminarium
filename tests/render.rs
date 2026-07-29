@@ -10,6 +10,19 @@ use terminarium::app::{App, Phase};
 use terminarium::engine::{Params, Rock, State, DEFAULT_ANCHOR_POS, MICRO, SLOTS};
 use terminarium::ui;
 
+/// The index a kind's name resolves to in `Params::default().rock_kinds` — the
+/// manifest order that also doubles as `Rock::kind`. New or changed test states
+/// that name a kind by index look it up here rather than hard-coding the
+/// literal, so appending a kind to the manifest cannot silently misnumber an
+/// unrelated test.
+fn kind_index(name: &str) -> usize {
+    Params::default()
+        .rock_kinds
+        .iter()
+        .position(|k| k.name == name)
+        .unwrap_or_else(|| panic!("no such rock kind: {name}"))
+}
+
 fn fixed_state() -> State {
     State {
         population: [3, 2, 2, 1],
@@ -197,20 +210,27 @@ fn palette_stays_in_indexed_256_space() {
         |c: Option<Color>| matches!(c, None | Some(Color::Reset) | Some(Color::Indexed(_)));
 
     // A swatch of the reef palette rather than a reachable placement: coral,
-    // kelp, and grotto side by side bring in every reef color at once — three
-    // rock bodies, three base-algae tints, and every tenant each houses (one per
-    // reef at each tier, since a tier's individuals are dealt round-robin).
+    // kelp, grotto, and lantern side by side bring in every reef color at once —
+    // four rock bodies, four base-algae tints, and every tenant each houses.
+    // Individuals are dealt round-robin by `i % rocks.len()`, so with four rocks
+    // population must rise to [4, 4, 4, 4] for every tier to reach all four
+    // (at the old [4, 3, 3, 3] the plankton/small/big tiers would skip lantern,
+    // the fourth and last rock in the list).
     let reefs = State {
-        population: [4, 3, 3, 3],
+        population: [4, 4, 4, 4],
         pool: [0; 4],
         nutrient: 0,
         collectable: 0,
         currency: 0,
-        score: 40_000 * MICRO,
+        score: 100_000 * MICRO, // clears lantern's unlock too
         rocks: vec![
             Rock { kind: 1, slot: 1 },
             Rock { kind: 2, slot: 3 },
             Rock { kind: 3, slot: 5 },
+            Rock {
+                kind: kind_index("lantern"),
+                slot: 7,
+            },
         ],
         tick_count: 300,
         started: true,
@@ -787,9 +807,17 @@ fn placement_lists_unlocked_kinds_budget_and_next_unlock() {
 }
 
 /// The placement screen at the second wall (score 75,000, budget 5): the budget
-/// reads out of 5, every kind is selectable with no locked goal left, and a kelp
-/// dropped (cost 3) leaves room — budget 3/5, placement still open — so a kelp
-/// sea is no longer the lone-reef the budget-3 wall forced.
+/// reads out of 5, every kind is selectable, and a kelp dropped (cost 3) leaves
+/// room — budget 3/5, placement still open — so a kelp sea is no longer the
+/// lone-reef the budget-3 wall forced.
+///
+/// Design change (#33): the budget-5 wall stays the *last budget step* (no new
+/// step is added), but unlock progression keeps going past it — lantern
+/// unlocks at score 100,000, well after this screen's 75,000. So a still-locked
+/// reef *correctly* shows as a goal here now; this test used to assert the
+/// opposite (no locked reef remains), which was the old ceiling-is-final
+/// reading. The assertion is inverted to pin the new reading rather than
+/// dropped, since "a goal keeps showing here" is itself a requirement.
 #[test]
 fn placement_budget_five_leaves_room_after_kelp() {
     // Score past the second wall: budget 5, every kind unlocked.
@@ -802,8 +830,8 @@ fn placement_budget_five_leaves_room_after_kelp() {
     );
     assert!(joined.contains("kelp(3)"), "kelp is selectable at budget 5");
     assert!(
-        !joined.contains("unlocks at"),
-        "no locked reef remains as a goal at budget 5"
+        joined.contains("lantern unlocks at 100000"),
+        "lantern still reads as the next goal past the (unraised) budget-5 wall: {joined}"
     );
 
     // A kelp placed (cost 3) leaves 2 of the 5 — placement continues, unlike the
@@ -857,15 +885,26 @@ fn hud_shows_score_and_next_reef() {
     );
 
     // Every reef unlocked and the budget fully spent: nothing left to work
-    // toward or rebuild for — the score stands alone.
+    // toward or rebuild for — the score stands alone. #33 pushed the last
+    // unlock to lantern's 100,000 (past the budget-5 wall at 75,000, which adds
+    // no kind of its own), and kelp + coral spends the budget-5 ceiling in full.
     let mut state = fixed_state();
-    state.score = 40_000 * MICRO; // past every unlock
-    state.rocks = vec![Rock { kind: 2, slot: 2 }]; // kelp spends the full budget 3
+    state.score = 100_000 * MICRO; // past every unlock, including lantern's
+    state.rocks = vec![
+        Rock {
+            kind: kind_index("kelp"),
+            slot: 2,
+        },
+        Rock {
+            kind: kind_index("coral"),
+            slot: 4,
+        },
+    ]; // kelp(3) + coral(2) spends the full budget 5
     state.tick_count = 300;
     state.collectable = 0;
     let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
     assert!(
-        joined.contains("score 40000"),
+        joined.contains("score 100000"),
         "score reads when all unlocked"
     );
     assert!(
@@ -1291,6 +1330,173 @@ fn grotto_sea_shows_coralline_fronds_shrimp_and_squid() {
     assert!(
         rows.iter().any(|row| row.contains("▛▀▜")),
         "the grotto body draws a cave mouth: {rows:?}"
+    );
+}
+
+/// The lantern reef's own tenants show their colors: the twinkling moss
+/// (`*`/`+`, 228) and the brighter plankton (159, two braille dots per
+/// individual against the shared plankton's one) — and its rock body stays
+/// unlit (243), the reef's glow carried entirely by its tenants. Small and big
+/// are zeroed: zero big keeps the anglerfish's lure (also 228) from mixing
+/// with the moss's own 228 here (the two-color test below covers the lure
+/// separately), and zero small sidesteps plankton being overdrawn by a swimmer
+/// sharing its cell (a known rendering quirk, work/render-observations.md
+/// 2026-07-28) so all 3 noctiluca count cleanly.
+#[test]
+fn lantern_sea_shows_its_moss_and_plankton_colors() {
+    use ratatui::style::Color;
+
+    let full = State {
+        population: [4, 3, 0, 0],
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 100_000 * MICRO,
+        rocks: vec![Rock {
+            kind: kind_index("lantern"),
+            slot: 4,
+        }],
+        tick_count: 300,
+        started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
+    };
+    let terminal = rendered_terminal_with(full.clone(), 100, 30);
+    let buffer = terminal.backend().buffer();
+    let cells = || (0..30u16).flat_map(|y| (0..100u16).map(move |x| (x, y)));
+    let count = |c: Color| -> usize {
+        cells()
+            .filter(|&(x, y)| buffer.cell((x, y)).expect("cell").style().fg == Some(c))
+            .count()
+    };
+
+    assert!(
+        cells().any(|(x, y)| {
+            let cell = buffer.cell((x, y)).expect("cell");
+            (cell.symbol() == "*" || cell.symbol() == "+")
+                && cell.style().fg == Some(Color::Indexed(228))
+        }),
+        "the twinkling moss shows its glow"
+    );
+    assert_eq!(
+        count(Color::Indexed(159)),
+        3,
+        "all 3 noctiluca show, each a single cell"
+    );
+    assert_eq!(
+        count(Color::Indexed(122)),
+        0,
+        "no shared plankton over a lantern reef"
+    );
+
+    // Bare of tenants, the body's own gray reads whole: `\Y/`, its center glyph
+    // in 243.
+    let bare = State {
+        population: [0; 4],
+        ..full
+    };
+    let bare_terminal = rendered_terminal_with(bare, 100, 30);
+    let rows = rows_of(&bare_terminal, 100, 30);
+    assert!(
+        rows.iter().any(|row| row.contains("\\Y/")),
+        "the lantern body draws its branch: {rows:?}"
+    );
+    let bare_buffer = bare_terminal.backend().buffer();
+    let y_cell = (0..30u16)
+        .flat_map(|y| (0..100u16).map(move |x| (x, y)))
+        .find(|&(x, y)| bare_buffer.cell((x, y)).expect("cell").symbol() == "Y")
+        .expect("the body's center glyph is drawn");
+    assert_eq!(
+        bare_buffer.cell(y_cell).expect("cell").style().fg,
+        Some(Color::Indexed(243)),
+        "the lantern body wears its own mid-gray"
+    );
+}
+
+/// The anglerfish is the first swimmer to wear a second color: its lure (the
+/// trailing `*`) glows in 228 while the rest of its 7-cell body wears 102, and
+/// the lure sits at the glyph's tail whichever way it swims — pinning
+/// `SwimmerDef::accent`'s left/right mirror (`cells - 1 - index`, so the
+/// right-facing tail-index-6 lure lands at the left-facing glyph's head).
+/// Algae is zeroed so the moss's own 228 cannot be mistaken for the lure's;
+/// with small and big at `[0, 1]` the one individual is the anglerfish alone,
+/// so every 102/228 cell on its row comes from it. A frame sweep
+/// (`rendered_at_frame`) hunts both facings rather than assuming either shows
+/// at a fixed frame, and fails loudly if 200 frames never turn up one.
+#[test]
+fn anglerfish_lure_reads_apart_from_its_body_in_both_directions() {
+    use ratatui::style::Color;
+
+    let state = State {
+        population: [0, 0, 0, 1],
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 100_000 * MICRO,
+        rocks: vec![Rock {
+            kind: kind_index("lantern"),
+            slot: 4,
+        }],
+        tick_count: 300,
+        started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
+    };
+
+    // For a glyph on-screen at some row, split that row's 102/228 cells into
+    // body and lure and check the lure sits at the tail: past the body's
+    // rightmost cell when facing right, before its leftmost when facing left.
+    let facing_shows_the_lure_at_its_tail = |rows: &[String],
+                                             buffer: &ratatui::buffer::Buffer,
+                                             glyph: &str,
+                                             lure_after_body: bool|
+     -> bool {
+        let Some(row_y) = rows.iter().position(|row| row.contains(glyph)) else {
+            return false;
+        };
+        let y = row_y as u16;
+        let mut body: Vec<u16> = Vec::new();
+        let mut lure: Vec<u16> = Vec::new();
+        for x in 0..100u16 {
+            match buffer.cell((x, y)).expect("cell").style().fg {
+                Some(Color::Indexed(102)) => body.push(x),
+                Some(Color::Indexed(228)) => lure.push(x),
+                _ => {}
+            }
+        }
+        if body.len() != 6 || lure.len() != 1 {
+            return false;
+        }
+        if lure_after_body {
+            lure[0] == *body.iter().max().expect("body has cells") + 1
+        } else {
+            lure[0] + 1 == *body.iter().min().expect("body has cells")
+        }
+    };
+
+    let (mut seen_right, mut seen_left) = (false, false);
+    for frame in 0..200u64 {
+        if seen_right && seen_left {
+            break;
+        }
+        let terminal = rendered_at_frame(state.clone(), 100, 30, frame);
+        let rows = rows_of(&terminal, 100, 30);
+        let buffer = terminal.backend().buffer();
+        if !seen_right && facing_shows_the_lure_at_its_tail(&rows, buffer, "><((>^*", true) {
+            seen_right = true;
+        }
+        if !seen_left && facing_shows_the_lure_at_its_tail(&rows, buffer, "*^<))><", false) {
+            seen_left = true;
+        }
+    }
+
+    assert!(
+        seen_right,
+        "a right-facing anglerfish must appear within 200 frames, lure past its tail"
+    );
+    assert!(
+        seen_left,
+        "a left-facing anglerfish must appear within 200 frames, lure before its head"
     );
 }
 

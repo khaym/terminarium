@@ -574,17 +574,17 @@ fn patrol(
         return; // window falls off the fittable strip
     }
     let travel = right - left;
-    let (x, glyph) = if travel == 0 {
-        (left, swimmer.right)
+    let (x, glyph, rightward) = if travel == 0 {
+        (left, swimmer.right, true)
     } else {
         let period = (2 * travel) as u64;
         // Phase offset per fish keeps same-rock fish out of lockstep, so even
         // two sharing a lane never coincide every frame.
         let t = ((frame / swimmer.slowdown + ordinal) % period) as i64;
         if t < travel {
-            (left + t, swimmer.right) // gliding right
+            (left + t, swimmer.right, true) // gliding right
         } else {
-            (left + 2 * travel - t, swimmer.left) // gliding back left
+            (left + 2 * travel - t, swimmer.left, false) // gliding back left
         }
     };
 
@@ -599,7 +599,36 @@ fn patrol(
         ordinal % lane
     };
     let y = area.top() + 1 + row as u16;
-    buf.set_string(x as u16, y, glyph, Style::new().fg(swimmer.color).bg(water));
+
+    // The accent (the anglerfish's lure) sits at a fixed cell of `right`; a
+    // left-facing draw mirrors that index (`cells - 1 - index`), which only
+    // lands correctly because `right` and `left` are the same length in cells
+    // (pinned for every kind by content::mod::tests). An out-of-range index
+    // degrades to no accent — an internal-origin fault, not a player one —
+    // rather than panicking.
+    let cells = swimmer.right.chars().count();
+    let accent = swimmer
+        .accent
+        .filter(|&(index, _)| index < cells)
+        .map(|(index, color)| {
+            let mirrored = if rightward { index } else { cells - 1 - index };
+            (mirrored, color)
+        });
+    for (i, ch) in glyph.chars().enumerate() {
+        let fg = match accent {
+            Some((accent_at, color)) if i == accent_at => color,
+            _ => swimmer.color,
+        };
+        let mut char_buf = [0u8; 4];
+        put(
+            buf,
+            area,
+            x + i as i64,
+            y,
+            ch.encode_utf8(&mut char_buf),
+            Style::new().fg(fg).bg(water),
+        );
+    }
 }
 
 /// Whether a whale crosses in `window`, and if so its heading (`true` =

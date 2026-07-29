@@ -1,0 +1,263 @@
+# lantern: the fifth reef, the next goal past the budget-5 wall (#33).
+#
+# Rides a single founding rock straight to lantern's own unlock (score
+# 100,000) — a placed reef sheds detritus from the moment it drops, so the
+# flat output alone gets there with no housing to fill along the way, and no
+# budget-5 sea to compose first. Then builds one lantern sea (a center reef
+# and an edge reef, both filled) for the bulk of the picture, and a second,
+# lantern-only budget-5 sea at the very end for the sprite-cap ceiling.
+#
+#   cargo run --example capture -- tests/scenarios/lantern.txt
+#
+# Values are raw engine integers, so 100000000000 is score 100,000. Waits are
+# compressed simulation time, and a buy key is a no-op while the species is
+# unaffordable or already housed — so a long wait then one sweep of 1/2/3/4
+# fills a sea, and a repeat sweep costs nothing.
+
+resize 100x30              # the playable size: the HUD and every key live here
+key enter                  # the founding rock on the mid-floor slot
+key s
+expect started true
+expect rocks == 1
+
+# --- straight to lantern's own unlock, riding the founding rock alone -----
+# No purchases: a placed reef sheds from the moment it is placed, so the flat
+# output (rock: 3 * MICRO/tick, 70% of it collectable after recycling) reaches
+# 100,000 on its own — no budget rebuild needed along the way.
+wait 48000000
+expect score >= 100000000000   # lantern is unlocked
+expect score <= 105000000000   # comfortably past it, not by a wild margin
+
+# --- the lantern sea: a center reef and an edge reef, both filled ---------
+key n
+key y
+key down                   # cycle to the last-unlocked kind: lantern
+capture ghost               # the ghost's shape names the kind; its color cannot
+key enter                  # drop it on the mid-floor slot (default cursor 4)
+key right
+key right
+key right
+key right                  # slot 8: the pane's right edge
+key enter                  # a second lantern reef there
+key s
+expect started true
+expect rocks == 2
+
+# Fill both reefs' combined housing (2 x [4, 3, 2, 1] = [8, 6, 4, 2] — 20
+# individuals).
+wait 4000000
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+wait 1000000
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+
+# --- the lantern sea in every light ---------------------------------------
+# Full housing, mid-floor: the branch body (243), the twinkling moss (228),
+# the brighter plankton (159), and the anglerfish's two-color body (102/228)
+# over each of the four waters.
+phase dawn
+capture center-dawn
+phase day
+capture center-day
+phase dusk
+capture center-dusk
+phase night
+capture center-night
+
+# The same sea in a thin side pane (both reefs share it: center at slot 4,
+# edge at slot 8): the three body glyphs still fit, and the base layer clips
+# to width/4.
+phase day
+resize 40x12
+capture center-pane-day
+
+# The center reef's 7-cell anglerfish still fits whole at the darkest water,
+# lure included (the `patrol` full-body clip and the accent coexist).
+phase night
+capture center-pane-night
+
+# The edge reef, in the same thin pane, at the darkest water — the fit and
+# legibility check at an edge slot.
+capture edge-pane-night
+
+# Full housing, at night: two captures a wait apart, to catch the anglerfish's
+# lure (228) reading apart from its body (102) in both patrol directions.
+resize 100x30
+phase night
+capture apex-a
+wait 6000
+capture apex-b
+
+# --- a lantern-only budget-5 sea, at the sprite-cap ceiling ----------------
+key n
+key y
+key down                   # lantern again
+key enter                  # slot 4
+key left
+key left
+key enter                  # slot 2
+key left
+key left
+key enter                  # slot 0
+key right
+key right
+key right
+key right
+key right
+key right
+key enter                  # slot 6
+key right
+key right
+key enter                  # slot 8
+key s
+expect started true
+expect rocks == 5
+
+# Fill every lantern's combined housing (5 x [4, 3, 2, 1] = [20, 15, 10, 5] —
+# the sprite-cap ceiling this budget-5 composition sits at exactly).
+wait 6000000
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+key 4
+key 4
+key 4
+wait 1500000
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+key 4
+key 4
+key 4
+phase day
+capture lantern-x5-day
+
+# The same ceiling sea in the thin pane: 20 moss against the width/4 clip
+# (= 10 at width 40) — the clip firing is what this frame is for.
+resize 40x12
+capture lantern-x5-pane-day
