@@ -393,6 +393,18 @@ fn housing_counts_from_placement_regardless_of_time() {
     }
 }
 
+/// The index a kind's name resolves to in `Params::default().rock_kinds` — which
+/// is also `Rock::kind`. A reef a test names is looked up here rather than
+/// written as a literal, since the manifest is append-only and a kind joining it
+/// must not silently renumber the reef another test meant.
+fn kind_index(name: &str) -> usize {
+    Params::default()
+        .rock_kinds
+        .iter()
+        .position(|k| k.name == name)
+        .unwrap_or_else(|| panic!("no such rock kind: {name}"))
+}
+
 /// Fill every species to the housing the given reef provides, then converge and
 /// measure the collectable gained over a window — the steady collection rate of
 /// a filled tank.
@@ -495,19 +507,12 @@ fn whale_gate_sits_between_full_budget_three_and_five_reefs() {
 #[test]
 fn budget_five_reef_out_collects_the_best_budget_three() {
     const WINDOW: u64 = 5_000;
-    let kind = |name: &str| {
-        Params::default()
-            .rock_kinds
-            .iter()
-            .position(|k| k.name == name)
-            .unwrap_or_else(|| panic!("no such rock kind: {name}"))
-    };
     let (rock, coral, kelp_k, grotto_k, lagoon_k) = (
-        kind("rock"),
-        kind("coral"),
-        kind("kelp"),
-        kind("grotto"),
-        kind("lagoon"),
+        kind_index("rock"),
+        kind_index("coral"),
+        kind_index("kelp"),
+        kind_index("grotto"),
+        kind_index("lagoon"),
     );
     let t3 = 30_000 * MICRO;
     let t4 = 40_000 * MICRO;
@@ -545,30 +550,18 @@ fn budget_five_reef_out_collects_the_best_budget_three() {
     );
 }
 
-/// Invariant 11c — the newer reef at a budget is the better one: at its own
-/// unlock (60,000) a filled lagoon out-collects the coral it costs the same as,
-/// so the reef a later wall hands out is worth rebuilding around. The same
+/// Invariant 11c — the floor of the lagoon's accepted collection band: at its
+/// own unlock (60,000) a filled lagoon out-collects the coral it costs the same
+/// as, so the reef a later wall hands out is worth rebuilding around. The same
 /// "rebuilding pays off" proof `regrown_reef_out_collects_the_old_one` states
 /// for coral, applied to the reef that now shares that budget.
 ///
-/// It is deliberately a comparison between *designed* reefs. Collection rate in
-/// this economy tracks algae housing and rock output almost alone, so the plain
-/// cheap reefs lead it outright (measured: rock×2 70,000 against coral's 54,600
-/// at the same cost, lantern×5 196,000 against every budget-5 sea) — a reef past
-/// the first is chosen for its housing mix and its character, not for out-
-/// earning a pile of rocks, and asserting otherwise would state a design the
-/// game does not have.
+/// The ceiling is the test below, and the two together freeze the agreed band
+/// `coral <= lagoon <= kelp` — see it for what fixes those two ends.
 #[test]
 fn a_filled_lagoon_out_collects_the_coral_it_costs_the_same_as() {
     const WINDOW: u64 = 5_000;
-    let kind = |name: &str| {
-        Params::default()
-            .rock_kinds
-            .iter()
-            .position(|k| k.name == name)
-            .unwrap_or_else(|| panic!("no such rock kind: {name}"))
-    };
-    let (coral, lagoon_k) = (kind("coral"), kind("lagoon"));
+    let (coral, lagoon_k) = (kind_index("coral"), kind_index("lagoon"));
     let t6 = 60_000 * MICRO;
 
     let lagoon = steady_collection_over_window(&[(lagoon_k, 0)], t6, WINDOW);
@@ -577,6 +570,38 @@ fn a_filled_lagoon_out_collects_the_coral_it_costs_the_same_as() {
     assert!(
         lagoon > coral_only,
         "a lagoon must out-collect the coral it costs the same as: {lagoon} vs {coral_only}"
+    );
+}
+
+/// Invariant 11d — the ceiling of that band: a filled lagoon stays under a
+/// filled kelp. Kelp is the reef the progression leans on as its collection
+/// anchor — the strongest single reef budget 3 can buy — and a kind unlocking
+/// into the band below it may approach that rate but not pass it, or the
+/// anchor stops meaning anything and the reef ordering reads backwards.
+///
+/// Why *kelp* is the anchor and not the nearest reef by cost: steady collection
+/// in this economy tracks algae housing and rock output almost alone. The tiers
+/// above the algae move biomass around and return it as detritus, so they never
+/// lift the rate — which is why the grotto, at cost 3 with 2 algae, collects
+/// exactly what the cost-2 coral does (measured: both 54,600 per 5,000 ticks at
+/// full housing, against the lagoon's 67,200 and kelp's 98,700). A ceiling read
+/// off cost alone would therefore be an empty band; the ceiling is the anchor
+/// reef instead. Whether the upper tiers should feed the rate at all is a
+/// structural question, open as #30 — until it lands, this band is the line the
+/// design holds, and a new reef that crosses either end turns one of these two
+/// asserts red on purpose.
+#[test]
+fn a_filled_lagoon_stays_under_the_kelp_that_anchors_the_band() {
+    const WINDOW: u64 = 5_000;
+    let (kelp_k, lagoon_k) = (kind_index("kelp"), kind_index("lagoon"));
+    let t6 = 60_000 * MICRO;
+
+    let lagoon = steady_collection_over_window(&[(lagoon_k, 0)], t6, WINDOW);
+    let kelp = steady_collection_over_window(&[(kelp_k, 0)], t6, WINDOW);
+
+    assert!(
+        lagoon <= kelp,
+        "a lagoon must not out-collect the kelp that anchors the band: {lagoon} vs {kelp}"
     );
 }
 
