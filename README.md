@@ -139,6 +139,10 @@ The economy is deterministic and readable in the tests: its rules live in
 
 ## Release history
 
+- **v0.3.0** — A fifth and a sixth reef. The lantern: moss and noctiluca glow
+  around an anglerfish's lit lure, past the budget-5 wall (score 100,000). The
+  lagoon: jellyfish pulse and drift over the seagrass under a gliding turtle —
+  the first life in the tank that moves vertically (score 60,000).
 - **v0.2.0** — A fourth reef, the grotto: shrimp crowd its cave mouth under a
   gliding squid. Unlocks at score 40,000.
 - **v0.1.0** — First release: the two-layer sea, the economy, three reefs, the
