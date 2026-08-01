@@ -209,37 +209,40 @@ fn palette_stays_in_indexed_256_space() {
     let in_space =
         |c: Option<Color>| matches!(c, None | Some(Color::Reset) | Some(Color::Indexed(_)));
 
-    // A swatch of the reef palette rather than a reachable placement: coral,
-    // kelp, grotto, and lantern side by side bring in every reef color at once —
-    // four rock bodies, four base-algae tints, and every tenant each houses.
-    // Individuals are dealt round-robin by `i % rocks.len()`, so with four rocks
-    // population must rise to [4, 4, 4, 4] for every tier to reach all four
-    // (at the old [4, 3, 3, 3] the plankton/small/big tiers would skip lantern,
-    // the fourth and last rock in the list).
+    // A swatch of the whole reef palette rather than a reachable placement: one
+    // rock of *every* kind in the manifest, side by side, brings in every reef
+    // color at once — each rock body, each base-algae tint, and every tenant any
+    // kind houses. Built from `rock_kinds` rather than a hand-written list, so a
+    // newly added kind is swatched the moment it joins the manifest.
+    //
+    // Individuals are dealt round-robin by `i % rocks.len()`, so population must
+    // be the kind count at every tier for each tier to reach the last rock in
+    // the list. (Limit: past `MAX_BIG_FISH` = 7 kinds the apex tier is capped
+    // before the round-robin reaches the trailing kinds, and their apex colors
+    // stop being swatched here — the caps would need raising with it.)
+    let kinds = Params::default().rock_kinds;
     let reefs = State {
-        population: [4, 4, 4, 4],
+        population: [kinds.len() as u32; 4],
         pool: [0; 4],
         nutrient: 0,
         collectable: 0,
         currency: 0,
-        score: 100_000 * MICRO, // clears lantern's unlock too
-        rocks: vec![
-            Rock { kind: 1, slot: 1 },
-            Rock { kind: 2, slot: 3 },
-            Rock { kind: 3, slot: 5 },
-            Rock {
-                kind: kind_index("lantern"),
-                slot: 7,
-            },
-        ],
+        // Clears the last unlock, so every kind is legitimately on screen.
+        score: kinds.iter().map(|k| k.unlock).max().expect("a kind"),
+        rocks: (0..kinds.len())
+            .map(|i| Rock {
+                kind: i,
+                slot: i as u8,
+            })
+            .collect(),
         tick_count: 300,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
     };
 
     // (label, terminal, w, h): the live scene at both sizes, the placement
-    // screen (run not started) with its own marker/preview colors, and a
-    // coral+kelp sea that brings in the reef-variant palette.
+    // screen (run not started) with its own marker/preview colors, and the
+    // every-kind sea that brings in the whole reef palette.
     let scenes = [
         ("wallpaper", rendered_terminal(40, 12), 40u16, 12u16),
         ("game", rendered_terminal(100, 30), 100, 30),
