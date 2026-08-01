@@ -350,7 +350,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::MICRO;
+    use crate::engine::{RockKind, MICRO, SPECIES};
 
     fn app_with(state: State) -> App {
         App::new(state, Params::default())
@@ -533,23 +533,40 @@ mod tests {
         );
     }
 
+    /// The kind cycle walks the kinds the score has unlocked, no others, and
+    /// wraps at both ends. It is a rule about unlock scores rather than about
+    /// the reefs that ship, so it is stated against a manifest of this test's
+    /// own: two kinds with made-up names, which keeps adding a reef kind from
+    /// moving this test (the shipped progression is pinned once, by
+    /// `content::tests::progression_registry_pins_cost_and_unlock`).
     #[test]
     fn placement_cycles_only_unlocked_kinds() {
-        let mut app = app_with(State::new());
+        let kind = |name: &'static str, unlock: u128| RockKind {
+            name,
+            cost: 1,
+            unlock,
+            output: 0,
+            capacity: [0; SPECIES],
+        };
+        let params = Params {
+            rock_kinds: vec![kind("amber", 0), kind("cobalt", 500 * MICRO)],
+            ..Params::default()
+        };
+        let mut app = App::new(State::new(), params);
         app.on_resize(100, 30);
         let none = KeyModifiers::NONE;
 
-        // Score 0: only the base rock is unlocked, so cycling is a no-op.
+        // Score 0: only the first kind is unlocked, so cycling is a no-op.
         assert_eq!(app.placement_kind, 0);
         app.on_key(KeyCode::Up, none);
-        assert_eq!(app.placement_kind, 0, "only rock unlocked at score 0");
+        assert_eq!(app.placement_kind, 0, "only amber unlocked at score 0");
 
-        // Score past coral's unlock brings a second kind into the cycle.
-        app.state.score = 12_000 * MICRO;
+        // Score past the second unlock brings it into the cycle.
+        app.state.score = 500 * MICRO;
         app.on_key(KeyCode::Up, none);
-        assert_eq!(app.placement_kind, 1, "coral now selectable");
+        assert_eq!(app.placement_kind, 1, "cobalt now selectable");
         app.on_key(KeyCode::Up, none);
-        assert_eq!(app.placement_kind, 0, "cycle wraps back to rock");
+        assert_eq!(app.placement_kind, 0, "the cycle wraps back to amber");
         app.on_key(KeyCode::Char('j'), none);
         assert_eq!(app.placement_kind, 1, "j walks the other way");
     }

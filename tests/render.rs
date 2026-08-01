@@ -7,7 +7,9 @@
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use terminarium::app::{App, Phase};
-use terminarium::engine::{Params, Rock, State, DEFAULT_ANCHOR_POS, MICRO, SLOTS};
+use terminarium::engine::{
+    Params, Rock, RockKind, State, DEFAULT_ANCHOR_POS, MICRO, SLOTS, SPECIES,
+};
 use terminarium::ui;
 
 /// The index a kind's name resolves to in `Params::default().rock_kinds` — the
@@ -41,9 +43,20 @@ fn fixed_state() -> State {
     }
 }
 
-/// Render one frame of `state` at the given size.
-fn rendered_terminal_with(state: State, width: u16, height: u16) -> Terminal<TestBackend> {
-    let mut app = App::new(state, Params::default());
+/// Render one frame of `state` at the given size under a supplied economy.
+///
+/// The rules that read the economy — the HUD goal line, the placement panel,
+/// the headroom nudge — are about the *shape* of a manifest, not about the
+/// reefs that happen to ship. A test that reads one of them passes its own
+/// manifest here, so it can line up boundaries the shipped content cannot hold
+/// at once, and so adding a reef kind does not move it.
+fn rendered_terminal_with_params(
+    state: State,
+    params: Params,
+    width: u16,
+    height: u16,
+) -> Terminal<TestBackend> {
+    let mut app = App::new(state, params);
     app.on_resize(width, height);
     app.frame = 8;
 
@@ -51,6 +64,48 @@ fn rendered_terminal_with(state: State, width: u16, height: u16) -> Terminal<Tes
     let mut terminal = Terminal::new(backend).expect("terminal");
     terminal.draw(|frame| ui::draw(&app, frame)).expect("draw");
     terminal
+}
+
+/// Render one frame of `state` at the given size, under the shipped economy.
+fn rendered_terminal_with(state: State, width: u16, height: u16) -> Terminal<TestBackend> {
+    rendered_terminal_with_params(state, Params::default(), width, height)
+}
+
+/// The screen `state` renders to under `params`, as one string — what the text
+/// rules (the goal line, the budget, the nudge) are read out of.
+fn screen_with_params(state: State, params: Params, width: u16, height: u16) -> String {
+    rows_of(
+        &rendered_terminal_with_params(state, params, width, height),
+        width,
+        height,
+    )
+    .join("\n")
+}
+
+/// A kind for a manifest a test builds itself. Only the name, the cost and the
+/// unlock reach the text under test; output and housing are zeroed, since no
+/// rule read here looks at them.
+fn synthetic_kind(name: &'static str, cost: u32, unlock: u128) -> RockKind {
+    RockKind {
+        name,
+        cost,
+        unlock,
+        output: 0,
+        capacity: [0; SPECIES],
+    }
+}
+
+/// An economy whose reef manifest and budget schedule are a test's own, with
+/// everything else left at the shipped values. The names here are deliberately
+/// not reef names, so a reading of one of these tests can never be mistaken for
+/// a statement about shipped content — that lives in the progression registry
+/// (`src/content/mod.rs`).
+fn synthetic_params(rock_kinds: Vec<RockKind>, budget_steps: Vec<(u128, u32)>) -> Params {
+    Params {
+        rock_kinds,
+        budget_steps,
+        ..Params::default()
+    }
 }
 
 /// Render one frame of the fixed scene at the given size.
@@ -809,178 +864,273 @@ fn placement_lists_unlocked_kinds_budget_and_next_unlock() {
     );
 }
 
-/// The placement screen at the second wall (score 75,000, budget 5): the budget
-/// reads out of 5, every kind is selectable, and a kelp dropped (cost 3) leaves
-/// room — budget 3/5, placement still open — so a kelp sea is no longer the
-/// lone-reef the budget-3 wall forced.
+/// The placement panel reads its manifest: kinds the score has unlocked are
+/// listed with their cost, locked ones are absent, the budget shows what the
+/// placed reef has spent out of the score's ceiling, and one goal line names a
+/// kind still to come.
 ///
-/// Design change (#33): the budget-5 wall stays the *last budget step* (no new
-/// step is added), but unlock progression keeps going past it — lantern
-/// unlocks at score 100,000, well after this screen's 75,000. So a still-locked
-/// reef *correctly* shows as a goal here now; this test used to assert the
-/// opposite (no locked reef remains), which was the old ceiling-is-final
-/// reading. The assertion is inverted to pin the new reading rather than
-/// dropped, since "a goal keeps showing here" is itself a requirement.
+/// Which one it names is the rule pinned here: the *first locked kind in
+/// manifest order*, not the nearest unlock ahead (that is the running HUD's
+/// rule, `hud_shows_score_and_next_reef`). Shipped content lists its kinds in
+/// ascending unlock order, where the two rules always agree and neither can be
+/// told from the other; the manifest below is deliberately out of that order so
+/// they disagree, and the panel's own rule shows.
 #[test]
-fn placement_budget_five_leaves_room_after_kelp() {
-    // Score past the second wall: budget 5, every kind unlocked.
+fn placement_panel_reads_budget_and_names_the_first_locked_kind() {
+    // Manifest order: amber, then umber (a late unlock), then cobalt (an
+    // earlier one). Between the two unlocks both are still locked, so the
+    // nearest-unlock rule would name cobalt and manifest order names umber.
+    let params = || {
+        synthetic_params(
+            vec![
+                synthetic_kind("amber", 1, 0),
+                synthetic_kind("umber", 3, 60_000 * MICRO),
+                synthetic_kind("cobalt", 2, 20_000 * MICRO),
+            ],
+            vec![(0, 1), (10_000 * MICRO, 5)],
+        )
+    };
+
     let mut state = State::new();
-    state.score = 75_000 * MICRO;
-    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    state.score = 10_000 * MICRO; // budget 5; umber and cobalt both locked
+    let screen = screen_with_params(state, params(), 100, 30);
     assert!(
-        joined.contains("budget 0/5"),
-        "budget reads out of 5: {joined}"
+        screen.contains("umber unlocks at 60000"),
+        "the goal names the first locked kind in manifest order: {screen}"
     );
-    assert!(joined.contains("kelp(3)"), "kelp is selectable at budget 5");
     assert!(
-        joined.contains("lantern unlocks at 100000"),
-        "lantern still reads as the next goal past the (unraised) budget-5 wall: {joined}"
+        !screen.contains("cobalt unlocks"),
+        "a nearer unlock further down the manifest is not the one named: {screen}"
+    );
+    assert!(
+        screen.contains("amber(1)"),
+        "an unlocked kind is listed with its cost: {screen}"
+    );
+    assert!(
+        !screen.contains("umber(3)") && !screen.contains("cobalt(2)"),
+        "locked kinds stay out of the selectable list: {screen}"
+    );
+    assert!(
+        screen.contains("budget 0/5"),
+        "an empty floor has spent nothing of the ceiling: {screen}"
     );
 
-    // A kelp placed (cost 3) leaves 2 of the 5 — placement continues, unlike the
-    // budget-3 wall where kelp spent everything.
+    // A cobalt placed (cost 2) spends 2 of the 5, so the panel reads the
+    // remaining room; cobalt is unlocked at this score, so it also joins the
+    // list, and umber — still locked — stays the goal.
     let mut state = State::new();
-    state.score = 75_000 * MICRO;
+    state.score = 20_000 * MICRO;
     state.rocks = vec![Rock { kind: 2, slot: 0 }];
-    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    let screen = screen_with_params(state, params(), 100, 30);
     assert!(
-        joined.contains("budget 3/5"),
-        "kelp spends 3 of 5, leaving room for more: {joined}"
+        screen.contains("budget 2/5"),
+        "a cost-2 reef spends 2 of 5, leaving room for more: {screen}"
     );
     assert!(
-        joined.contains("[enter] place"),
-        "the placement hint stays — more reef can still be dropped"
+        screen.contains("cobalt(2)"),
+        "the newly unlocked kind joins the list: {screen}"
+    );
+    assert!(
+        screen.contains("umber unlocks at 60000"),
+        "the last locked kind is still the goal: {screen}"
     );
 }
 
 /// The HUD shows the lifetime score and, while a reef is still locked, the
-/// score threshold of the next one — the goal a new sea works toward. With
-/// every reef unlocked the goal drops and only the score remains.
+/// score threshold of the next one — the goal a new sea works toward. The
+/// threshold named is the nearest unlock ahead; reaching it moves the goal on,
+/// and once every reef is unlocked the goal drops and only the score remains.
+/// Read off a manifest of this test's own, so the rule is stated without
+/// depending on which reefs ship.
 #[test]
 fn hud_shows_score_and_next_reef() {
+    // One budget step, so a placed reef always spends the whole budget and the
+    // headroom nudge (which would take this line over) never fires — the goal
+    // is what moves here. Crossing a wall *with* headroom is the third block.
+    let params = || {
+        synthetic_params(
+            vec![
+                synthetic_kind("amber", 1, 0),
+                synthetic_kind("cobalt", 1, 1_000 * MICRO),
+                synthetic_kind("umber", 1, 5_000 * MICRO),
+            ],
+            vec![(0, 1)],
+        )
+    };
     // collectable is zeroed so entering the game layer does not fold surplus
     // into the score under test.
-    let mut state = fixed_state();
-    state.score = 1_234 * MICRO;
-    state.collectable = 0;
-    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
-    assert!(joined.contains("score 1234"), "score reads: {joined}");
+    let sea = |score: u128| {
+        let mut state = fixed_state();
+        state.score = score;
+        state.collectable = 0;
+        state.rocks = vec![Rock { kind: 0, slot: 2 }]; // amber: spends the budget
+        state
+    };
+
+    // The whole line at once: the score, then the nearest unlock ahead. (A
+    // substring of the score alone would also match a longer number.)
+    let screen = screen_with_params(sea(500 * MICRO), params(), 100, 30);
     assert!(
-        joined.contains("next reef at 12000"),
-        "the next reef threshold reads"
+        screen.contains("score 500   next reef at 1000"),
+        "the score reads, with the nearest unlock ahead as the goal: {screen}"
     );
 
-    // Crossing a threshold mid-run: the budget now exceeds what the reef spends,
-    // so the line names the kind that wall unlocked and shows the unspent
-    // headroom in budget terms, pointing at the new sea — the crossing announces
-    // its reward and the reason to rebuild stays visible after the unlock.
-    let mut state = fixed_state();
-    state.score = 12_000 * MICRO; // coral's wall crossed; budget 2, one rock spends 1
-    state.collectable = 0;
-    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    // The unlock boundary: one under it the goal still stands, and at it the
+    // kind counts as unlocked, so the goal moves on to the one after.
+    let screen = screen_with_params(sea(1_000 * MICRO - 1), params(), 100, 30);
     assert!(
-        joined.contains("coral unlocked, budget 1/2 - [n] new sea"),
-        "the crossed wall's coral reward and unspent budget are announced: {joined}"
+        screen.contains("next reef at 1000"),
+        "a score one under the unlock still works toward it: {screen}"
     );
+    let screen = screen_with_params(sea(1_000 * MICRO), params(), 100, 30);
     assert!(
-        !joined.contains("next reef"),
-        "the rebuild nudge replaces the next-threshold goal"
+        screen.contains("next reef at 5000"),
+        "at the unlock the goal moves on to the next one: {screen}"
     );
 
-    // Every reef unlocked and the budget fully spent: nothing left to work
-    // toward or rebuild for — the score stands alone. #33 pushed the last
-    // unlock to lantern's 100,000 (past the budget-5 wall at 75,000, which adds
-    // no kind of its own), and kelp + coral spends the budget-5 ceiling in full.
-    let mut state = fixed_state();
-    state.score = 100_000 * MICRO; // past every unlock, including lantern's
-    state.rocks = vec![
-        Rock {
-            kind: kind_index("kelp"),
-            slot: 2,
-        },
-        Rock {
-            kind: kind_index("coral"),
-            slot: 4,
-        },
-    ]; // kelp(3) + coral(2) spends the full budget 5
-    state.tick_count = 300;
-    state.collectable = 0;
-    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    // Nearest ahead, not first in the manifest — the other reading of "next",
+    // and the placement panel's rule
+    // (`placement_panel_reads_budget_and_names_the_first_locked_kind`). Shipped
+    // content lists its kinds in ascending unlock order, where the two agree; a
+    // manifest out of that order tells them apart.
+    let out_of_order = synthetic_params(
+        vec![
+            synthetic_kind("amber", 1, 0),
+            synthetic_kind("umber", 1, 5_000 * MICRO),
+            synthetic_kind("cobalt", 1, 1_000 * MICRO),
+        ],
+        vec![(0, 1)],
+    );
+    let screen = screen_with_params(sea(500 * MICRO), out_of_order, 100, 30);
     assert!(
-        joined.contains("score 100000"),
-        "score reads when all unlocked"
+        screen.contains("next reef at 1000"),
+        "the goal is the nearest unlock ahead, wherever it sits in the manifest: {screen}"
+    );
+
+    // Past every unlock, with the budget fully spent: nothing left to work
+    // toward or rebuild for — the score stands alone.
+    let screen = screen_with_params(sea(5_000 * MICRO), params(), 100, 30);
+    assert!(
+        screen.contains("score 5000"),
+        "score reads when all unlocked: {screen}"
     );
     assert!(
-        !joined.contains("next reef") && !joined.contains("- [n] new sea"),
-        "no goal and no nudge once everything is unlocked and spent"
+        !screen.contains("next reef") && !screen.contains("- [n] new sea"),
+        "no goal and no nudge once everything is unlocked and spent: {screen}"
+    );
+
+    // A kind unlocking exactly on a budget wall: crossing it raises the budget
+    // past what the reef spends, so the crossing announces its reward and the
+    // rebuild nudge takes the goal line's place — the reason to start a new sea
+    // stays visible after the unlock.
+    let wall = synthetic_params(
+        vec![
+            synthetic_kind("amber", 1, 0),
+            synthetic_kind("cobalt", 1, 1_000 * MICRO),
+        ],
+        vec![(0, 1), (1_000 * MICRO, 2)],
+    );
+    let screen = screen_with_params(sea(1_000 * MICRO), wall, 100, 30);
+    assert!(
+        screen.contains("cobalt unlocked, budget 1/2 - [n] new sea"),
+        "the crossed wall's reward and unspent budget are announced: {screen}"
+    );
+    assert!(
+        !screen.contains("next reef"),
+        "the rebuild nudge replaces the next-threshold goal: {screen}"
     );
 }
 
 /// The headroom nudge speaks the placement screen's budget vocabulary, so it
-/// stays accurate at every budget step — including the budget-5 wall (score
-/// 75,000) that unlocks no new kind. A kelp reef past that wall reports its
-/// unspent budget instead of dressing long-unlocked coral as freshly
-/// "unlocked" (symptom 1), and the budget-5 step is announced at all where
-/// naming a kind said nothing (symptom 2). A fully-spent budget clears the line.
+/// stays accurate at a wall that unlocks no kind of its own: it reports the
+/// unspent budget rather than dressing a long-unlocked kind as freshly
+/// "unlocked" (symptom 1), and it is announced at all where naming a kind would
+/// have said nothing (symptom 2). A fully-spent budget clears the line. The
+/// manifest is this test's own, so a kind-less wall can be posed directly
+/// instead of waiting for the shipped schedule to hold one.
 #[test]
-fn headroom_nudge_reads_as_budget_at_the_second_wall() {
-    // A kelp reef (spends 3) past the budget-5 wall: budget 5 > 3, headroom
-    // shows. The old code named the newest absent kind — coral — as "unlocked"
-    // here, though coral unlocked at 12,000; budget vocabulary cannot go stale.
-    let mut state = fixed_state();
-    state.score = 75_000 * MICRO;
-    state.rocks = vec![Rock { kind: 2, slot: 2 }]; // kelp, spends 3 of 5
-    state.collectable = 0;
-    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+fn headroom_nudge_reads_as_budget_at_a_kindless_wall() {
+    // Two walls: the first unlocks cobalt, the second (50,000) unlocks nothing.
+    let params = || {
+        synthetic_params(
+            vec![
+                synthetic_kind("amber", 1, 0),
+                synthetic_kind("cobalt", 2, 20_000 * MICRO),
+            ],
+            vec![(0, 1), (20_000 * MICRO, 2), (50_000 * MICRO, 4)],
+        )
+    };
+    let sea = |rocks: Vec<Rock>| {
+        let mut state = fixed_state();
+        state.score = 50_000 * MICRO; // past the kind-less wall: budget 4
+        state.collectable = 0;
+        state.rocks = rocks;
+        state
+    };
+
+    // One cobalt (spends 2 of 4). Long-unlocked cobalt must not be read as the
+    // reward of a wall it did not come from: budget vocabulary cannot go stale.
+    let screen = screen_with_params(sea(vec![Rock { kind: 1, slot: 2 }]), params(), 100, 30);
     assert!(
-        joined.contains("budget 3/5 - [n] new sea"),
-        "the nudge reports unspent budget: {joined}"
+        screen.contains("budget 2/4 - [n] new sea"),
+        "the nudge reports unspent budget: {screen}"
     );
     assert!(
-        !joined.contains("unlocked"),
-        "the nudge never claims a stale unlock: {joined}"
+        !screen.contains("unlocked"),
+        "the nudge never claims a stale unlock: {screen}"
     );
 
-    // kelp + rock spends 4 of 5 — the budget-5 wall's headroom announced in
-    // budget terms (regression guard for the silent budget-5 step).
-    let mut state = fixed_state();
-    state.score = 75_000 * MICRO;
-    state.rocks = vec![Rock { kind: 2, slot: 2 }, Rock { kind: 0, slot: 4 }];
-    state.collectable = 0;
-    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    // cobalt + amber spends 3 of 4 — the kind-less wall's headroom is still
+    // announced, in budget terms (the regression guard for a silent step).
+    let screen = screen_with_params(
+        sea(vec![Rock { kind: 1, slot: 2 }, Rock { kind: 0, slot: 4 }]),
+        params(),
+        100,
+        30,
+    );
     assert!(
-        joined.contains("budget 4/5 - [n] new sea"),
-        "the budget-5 headroom reads: {joined}"
+        screen.contains("budget 3/4 - [n] new sea"),
+        "the kind-less wall's headroom reads: {screen}"
     );
 
-    // kelp + coral spends the full 5 — no headroom, so no nudge line.
-    let mut state = fixed_state();
-    state.score = 75_000 * MICRO;
-    state.rocks = vec![Rock { kind: 2, slot: 2 }, Rock { kind: 1, slot: 4 }];
-    state.collectable = 0;
-    let joined = rows_of(&rendered_terminal_with(state, 100, 30), 100, 30).join("\n");
+    // Two cobalt spends the full 4 — no headroom, so no nudge line.
+    let screen = screen_with_params(
+        sea(vec![Rock { kind: 1, slot: 2 }, Rock { kind: 1, slot: 4 }]),
+        params(),
+        100,
+        30,
+    );
     assert!(
-        !joined.contains("- [n] new sea"),
-        "a fully-spent budget clears the nudge: {joined}"
+        !screen.contains("- [n] new sea"),
+        "a fully-spent budget clears the nudge: {screen}"
     );
 }
 
 /// The headroom nudge names the kind the latest crossed budget wall unlocked, so
-/// a wall crossing announces its reward. Past the 30k wall a coral reef (spends
-/// 2 of 3) reads the kelp unlock alongside its headroom. The name belongs to the
-/// latest wall only — crossing the next, kind-less wall (75k) drops it, which is
-/// why the second-wall test above sees no "unlocked": staleness cannot arise.
-/// Rendered at the 80-column minimum, so the fuller line still fits the pane.
+/// a wall crossing announces its reward. The name belongs to the latest wall
+/// only — crossing a later, kind-less wall drops it (the test above), so the
+/// name can never go stale. Where two kinds share the wall's score the newer of
+/// them — the later in manifest order — is the one named. Rendered at the
+/// 80-column minimum, so the fuller line still fits the pane. The manifest is
+/// this test's own: shipped content cannot put two kinds on one wall.
 #[test]
 fn headroom_nudge_names_the_latest_crossed_wall() {
+    let params = synthetic_params(
+        vec![
+            synthetic_kind("amber", 1, 0),
+            synthetic_kind("cobalt", 2, 20_000 * MICRO),
+            synthetic_kind("umber", 2, 20_000 * MICRO), // shares cobalt's wall
+        ],
+        vec![(0, 1), (20_000 * MICRO, 4)],
+    );
     let mut state = fixed_state();
-    state.score = 30_000 * MICRO; // kelp's wall just crossed; budget 3
-    state.rocks = vec![Rock { kind: 1, slot: 2 }]; // coral, spends 2 of 3
+    state.score = 20_000 * MICRO; // the wall just crossed; budget 4
+    state.rocks = vec![Rock { kind: 1, slot: 2 }]; // cobalt, spends 2 of 4
     state.collectable = 0;
-    let joined = rows_of(&rendered_terminal_with(state, 80, 20), 80, 20).join("\n");
+    let screen = screen_with_params(state, params, 80, 20);
     assert!(
-        joined.contains("kelp unlocked, budget 2/3 - [n] new sea"),
-        "the 30k wall's kelp reward is named with the headroom, whole at 80 cols: {joined}"
+        screen.contains("umber unlocked, budget 2/4 - [n] new sea"),
+        "the wall's reward is named with the headroom, whole at 80 cols: {screen}"
     );
 }
 

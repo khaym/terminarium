@@ -92,6 +92,43 @@ pub fn rock_kinds() -> Vec<RockKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::MICRO;
+
+    /// The progression registry: what the shipped game asks a player to work
+    /// toward, as one literal table — every kind's placement cost and unlock
+    /// score, in manifest order.
+    ///
+    /// This is an *exact* match on the whole table, so adding a kind, retuning
+    /// a cost or moving an unlock all turn it red on purpose. The red is the
+    /// point: the standard answer is to append the ticket's agreed
+    /// `(name, cost, unlock)` row here, which makes this file the one place a
+    /// change to the progression design is recorded and read by a human.
+    ///
+    /// It reads like `shipped_kinds_keep_their_save_identity` above and guards
+    /// something else. That one pins a *prefix*, so appending a kind stays
+    /// green — appending cannot break a save. This one admits nothing silently.
+    /// The display rules that read these numbers (the HUD goal line, the
+    /// placement panel, the headroom nudge, the placement cycle) are tested
+    /// against manifests those tests build themselves, so they stay green when
+    /// a kind joins and this stays the one red that asks a human to look.
+    #[test]
+    fn progression_registry_pins_cost_and_unlock() {
+        let table: Vec<(&str, u32, u128)> = KINDS
+            .iter()
+            .map(|def| (def.economy.name, def.economy.cost, def.economy.unlock))
+            .collect();
+        assert_eq!(
+            table,
+            vec![
+                ("rock", 1, 0),
+                ("coral", 2, 12_000 * MICRO),
+                ("kelp", 3, 30_000 * MICRO),
+                ("grotto", 3, 40_000 * MICRO),
+                ("lantern", 1, 100_000 * MICRO),
+            ],
+            "the progression design moved — record the agreed row here"
+        );
+    }
 
     /// The manifest order is the save format: a rock stores its kind as an
     /// index, so kinds may be appended but the ones already shipped can never
