@@ -3,7 +3,7 @@
 
 use ratatui::style::Color;
 
-use super::SwimmerDef;
+use super::{Manner, SwimmerDef};
 
 /// A warm tan.
 const DUGONG: Color = Color::Indexed(180);
@@ -16,4 +16,5 @@ pub const DEF: SwimmerDef = SwimmerDef {
     reef_bias: false,
     color: DUGONG,
     accent: None,
+    manner: Manner::PLAIN,
 };

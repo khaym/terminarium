@@ -247,8 +247,9 @@ impl App {
     }
 
     /// Move `placement_kind` by `delta` steps through the unlocked kinds
-    /// (wrapping). Kinds are ordered by unlock score, so the unlocked ones form
-    /// a prefix the score decides.
+    /// (wrapping). Each kind is tested against its own unlock rather than a cut
+    /// through the list: the manifest is append-only, so a kind added later can
+    /// unlock earlier and the unlocked ones are not always a prefix of it.
     fn cycle_kind(&mut self, delta: i32) {
         let unlocked: Vec<usize> = (0..self.params.rock_kinds.len())
             .filter(|&k| self.state.score >= self.params.rock_kinds[k].unlock)

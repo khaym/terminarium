@@ -3,11 +3,11 @@
 //! A kind is an economy row (what it costs, when it unlocks, what it sheds, how
 //! much it houses), the look of its own rock body, and the creature it houses at
 //! each of the four economy tiers. All of it lives in the same file — `rock.rs`,
-//! `coral.rs`, `kelp.rs`, `grotto.rs`, `lantern.rs` — so adding a kind is one new
-//! definition file plus its name in the `kinds!` manifest below, with no edit to
-//! the engine or the renderer. `Params::default` builds its economy rows from
-//! the manifest and the wallpaper reads the look from it, so the two halves of
-//! a kind can never drift apart.
+//! `coral.rs`, `kelp.rs`, `grotto.rs`, `lantern.rs`, `lagoon.rs` — so adding a
+//! kind is one new definition file plus its name in the `kinds!` manifest below,
+//! with no edit to the engine or the renderer. `Params::default` builds its
+//! economy rows from the manifest and the wallpaper reads the look from it, so
+//! the two halves of a kind can never drift apart.
 //!
 //! The tenants themselves are content of their own, one file per creature in
 //! `creatures/`. A kind names them by reference, so the creature two kinds share
@@ -47,7 +47,7 @@ macro_rules! kinds {
 }
 
 // The manifest: the one shared line a new kind adds itself to (append only).
-kinds!(rock, coral, kelp, grotto, lantern);
+kinds!(rock, coral, kelp, grotto, lantern, lagoon);
 
 /// One reef kind, whole: its economy row, its rock body, and its four tenants.
 /// The engine reads the economy, the wallpaper reads the body and follows the
@@ -125,6 +125,7 @@ mod tests {
                 ("kelp", 3, 30_000 * MICRO),
                 ("grotto", 3, 40_000 * MICRO),
                 ("lantern", 1, 100_000 * MICRO),
+                ("lagoon", 2, 60_000 * MICRO),
             ],
             "the progression design moved — record the agreed row here"
         );
@@ -151,25 +152,62 @@ mod tests {
     /// (`patrol`, src/ui/wallpaper.rs), but shipped content should never
     /// actually take that degrade path, so both preconditions are pinned here
     /// across every kind's small and big tenants (the only tiers that are
-    /// swimmers).
+    /// swimmers) and across both appearances, since a pulse turns over
+    /// independently of the heading and its frame is mirrored the same way.
     #[test]
     fn swimmer_defs_have_matching_cell_counts_and_in_range_accents() {
         for def in KINDS {
             for swimmer in [def.small, def.big] {
-                let right_cells = swimmer.right.chars().count();
-                let left_cells = swimmer.left.chars().count();
-                assert_eq!(
-                    right_cells, left_cells,
-                    "{}: right/left cell counts must match ({right_cells} vs {left_cells})",
-                    def.economy.name
-                );
-                if let Some((index, _)) = swimmer.accent {
-                    assert!(
-                        index < right_cells,
-                        "{}: accent index {index} is out of range for {right_cells} cells",
+                // Frame 0 is the swimmer's own look; one pulse period on is its
+                // second, if it has one.
+                let beat = swimmer
+                    .manner
+                    .pulse
+                    .as_ref()
+                    .map_or(0, |pulse| pulse.period.max(1));
+                for frame in [0, beat] {
+                    let look = swimmer.look(frame);
+                    let right_cells = look.right.chars().count();
+                    let left_cells = look.left.chars().count();
+                    assert_eq!(
+                        right_cells, left_cells,
+                        "{}: right/left cell counts must match ({right_cells} vs {left_cells})",
                         def.economy.name
                     );
+                    if let Some((index, _)) = swimmer.accent {
+                        assert!(
+                            index < right_cells,
+                            "{}: accent index {index} is out of range for {right_cells} cells",
+                            def.economy.name
+                        );
+                    }
                 }
+            }
+        }
+    }
+
+    /// A pulsing swimmer really does wear two appearances: its own and its
+    /// pulse's differ, so the beat shows on screen instead of redrawing the
+    /// same sprite. (Only the jellyfish pulses today; the loop states the rule
+    /// for whatever pulses next.)
+    #[test]
+    fn a_pulse_changes_the_sprite_it_draws() {
+        for def in KINDS {
+            for swimmer in [def.small, def.big] {
+                let Some(pulse) = &swimmer.manner.pulse else {
+                    continue;
+                };
+                let own = swimmer.look(0);
+                assert!(
+                    (own.right, own.under) != (pulse.look.right, pulse.look.under),
+                    "{}: a pulse must draw something other than the body it pulses from",
+                    def.economy.name
+                );
+                assert!(
+                    pulse.period > 0,
+                    "{}: a pulse needs a beat",
+                    def.economy.name
+                );
             }
         }
     }

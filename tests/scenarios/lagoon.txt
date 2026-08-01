@@ -1,0 +1,287 @@
+# lagoon: the sixth reef, from its unlock to a sea of drifting jellyfish (#23).
+#
+# Plays the story of the ticket — found a sea, ride it to score 60,000, rebuild
+# on the lagoon, fill every tier, then look at that sea in all four lights, in
+# both panes, and (twice over, a few frames apart) closely enough to see the
+# jellyfish pulse and drift. Ends past the budget-5 wall with two lagoons and a
+# rock, the composition that fields the most jellyfish the game can.
+#
+#   cargo run --example capture -- tests/scenarios/lagoon.txt
+#
+# Values are raw engine integers, so 60000000000 is score 60,000. Waits are
+# compressed simulation time, and a buy key is a no-op while the species is
+# unaffordable or already housed — so a long wait then one sweep of 1/2/3/4
+# fills a sea, and a repeat sweep costs nothing. A wait also ages the animation:
+# 200ms is one frame, which is what the drift and pulse captures below count in.
+
+resize 100x30              # the playable size: the HUD and every key live here
+key enter                  # the founding rock on the mid-floor slot
+key s
+expect started true
+expect rocks == 1
+
+# --- straight to the lagoon's unlock, riding the founding rock alone ------
+# No purchases: a placed reef sheds from the moment it is placed, so the flat
+# output (rock: 3 * MICRO/tick, 70% of it collectable after recycling) reaches
+# 60,000 on its own.
+wait 29000000
+expect score >= 60000000000   # the lagoon is unlocked
+expect score <= 74999999999   # and the budget-5 wall is still ahead
+
+# --- the lagoon sea: one reef mid-floor, filled to its housing ------------
+key n
+key y
+key down                   # cycle to the last unlocked kind: the lagoon
+capture ghost              # the ghost's shape names the kind; its color cannot
+key enter                  # drop it on the mid-floor slot (default cursor 4)
+key s
+expect started true
+expect rocks == 1
+
+# Fill the lagoon's housing ([4, 4, 6, 2] — 16 individuals, ~18,500 currency).
+wait 3000000
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+wait 1000000
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+
+# --- the lagoon sea in every light ----------------------------------------
+# Full housing, mid-floor: the sandbar body (187), the seagrass base (112), six
+# jellyfish (183, bell over tentacles) and two turtles (71), over each water.
+phase dawn
+capture center-dawn
+phase day
+capture center-day
+phase dusk
+capture center-dusk
+phase night
+capture center-night
+
+# --- the drift and the pulse, frame by frame ------------------------------
+# Three captures of the same sea, four and then ten frames apart. Compare the
+# jellyfish rows between them: the bell alternates between its open frame
+# (⢞⢛⢳ / ⠁⠃⠃) and its contracted one (⠰⡛⡆ / ⠈⠊) every four frames, and the
+# whole sprite rides up or down its lane over the ten. Nothing else in the sea
+# moves vertically, so a row change here is the drift and only the drift.
+phase day
+capture drift-1
+wait 800                   # four frames: the pulse turns over
+capture drift-2
+wait 2400                  # twelve more: back to the open bell, two rows along
+capture drift-3
+
+# --- the turtle, both ways ------------------------------------------------
+# Twelve seconds apart, exactly the turtle's leg (20 columns at one column per
+# three frames), so the two frames catch it heading opposite ways: =(<>)o
+# against o(<>)=.
+phase night
+capture apex-a
+wait 12000
+capture apex-b
+
+# --- the thin side pane ---------------------------------------------------
+# The tank's home: the two-row jellyfish must keep both rows in the water here,
+# clear of the wave row and the floor, at the brightest and the darkest water.
+resize 40x12
+phase dawn
+capture center-pane-dawn
+phase day
+capture center-pane-day
+phase dusk
+capture center-pane-dusk
+phase night
+capture center-pane-night
+
+# --- an edge slot, in the thin pane ---------------------------------------
+resize 100x30              # back to the game layer, the only one taking keys
+key n
+key y
+key right
+key right
+key right
+key right                  # slot 8: the pane's right edge
+key down                   # the lagoon again
+key enter
+key s
+expect rocks == 1
+wait 3000000
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+wait 1000000
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+phase day
+capture edge-day           # the HUD reads the housing this pane cannot show
+phase night
+resize 40x12
+capture edge-pane-night
+
+# --- past the budget-5 wall: two lagoons and a rock ------------------------
+# The composition that fields the most small tenants of any sea the budget can
+# buy — 6+6+2 = 14 jellyfish, which is what the renderer's small-fish sprite cap
+# is now sized for.
+resize 100x30
+wait 4000000
+expect score >= 75000000000
+key n
+key y
+key down                   # the lagoon on the mid-floor slot
+key enter
+key left
+key left
+key enter                  # a second lagoon two slots along
+key right
+key right
+key right
+key right
+key up                     # back around to the founding rock
+key enter
+key s
+expect rocks == 3
+wait 5000000
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+key 4
+key 4
+key 4
+wait 2000000
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 1
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 2
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 3
+key 4
+key 4
+key 4
+key 4
+key 4
+phase day
+capture lagoon-x2-rock-day
+resize 40x12
+capture lagoon-x2-rock-pane-day

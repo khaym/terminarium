@@ -489,35 +489,94 @@ fn whale_gate_sits_between_full_budget_three_and_five_reefs() {
 
 /// Invariant 11b — the second wall pays off: after the budget-5 step (score
 /// 75,000) a kelp+coral sea collects faster at steady state than the best reef
-/// budget 3 can compose (kelp alone / coral+rock / rock×3). The existence proof
-/// that crossing the new wall is worth it, mirroring the budget-2-over-1 proof.
+/// budget 3 can compose (kelp alone / coral+rock / rock×3 / grotto / lagoon+rock
+/// / lagoon+lantern). The existence proof that crossing the new wall is worth
+/// it, mirroring the budget-2-over-1 proof.
 #[test]
 fn budget_five_reef_out_collects_the_best_budget_three() {
     const WINDOW: u64 = 5_000;
+    let kind = |name: &str| {
+        Params::default()
+            .rock_kinds
+            .iter()
+            .position(|k| k.name == name)
+            .unwrap_or_else(|| panic!("no such rock kind: {name}"))
+    };
+    let (rock, coral, kelp_k, grotto_k, lagoon_k) = (
+        kind("rock"),
+        kind("coral"),
+        kind("kelp"),
+        kind("grotto"),
+        kind("lagoon"),
+    );
     let t3 = 30_000 * MICRO;
     let t4 = 40_000 * MICRO;
     let t5 = 75_000 * MICRO;
+    let t6 = 60_000 * MICRO;
 
     // Every way to spend budget 3 in full: the three compositions open once kelp
-    // unlocks at score 30,000, and the grotto from its own unlock at 40,000 —
-    // still budget 3, since the schedule's next step is the 75,000 wall. A
-    // partial spend houses strictly less, so it can never be the best.
-    // (#33: lantern, cost 1, cannot enter this list either — its unlock is
-    // 100,000, past the 75,000 wall that is budget 3's own ceiling here.)
-    let kelp = steady_collection_over_window(&[(2, 0)], t3, WINDOW);
-    let coral_rock = steady_collection_over_window(&[(1, 0), (0, 1)], t3, WINDOW);
-    let rock_x3 = steady_collection_over_window(&[(0, 0), (0, 1), (0, 2)], t3, WINDOW);
-    let grotto = steady_collection_over_window(&[(3, 0)], t4, WINDOW);
-    let best_three = kelp.max(coral_rock).max(rock_x3).max(grotto);
+    // unlocks at score 30,000, the grotto from its own unlock at 40,000, and the
+    // cost-2 lagoon beside a cost-1 reef from 60,000 — all still budget 3, since
+    // the schedule's next step is the 75,000 wall. A partial spend houses
+    // strictly less, so it can never be the best.
+    // (#33: lantern, cost 1, opens no budget-3 pair of its own — its unlock is
+    // 100,000, past the 75,000 wall that is budget 3's own ceiling here, so
+    // lagoon's partner at 60,000 can only be a rock.)
+    let kelp = steady_collection_over_window(&[(kelp_k, 0)], t3, WINDOW);
+    let coral_rock = steady_collection_over_window(&[(coral, 0), (rock, 1)], t3, WINDOW);
+    let rock_x3 = steady_collection_over_window(&[(rock, 0), (rock, 1), (rock, 2)], t3, WINDOW);
+    let grotto = steady_collection_over_window(&[(grotto_k, 0)], t4, WINDOW);
+    let lagoon_rock = steady_collection_over_window(&[(lagoon_k, 0), (rock, 1)], t6, WINDOW);
+    let best_three = kelp
+        .max(coral_rock)
+        .max(rock_x3)
+        .max(grotto)
+        .max(lagoon_rock);
 
     // Budget 5 buys kelp+coral — the composition the new wall unlocks.
-    let kelp_coral = steady_collection_over_window(&[(2, 0), (1, 1)], t5, WINDOW);
+    let kelp_coral = steady_collection_over_window(&[(kelp_k, 0), (coral, 1)], t5, WINDOW);
 
     assert!(
         kelp_coral > best_three,
         "kelp+coral (budget 5) must out-collect the best budget-3 reef: \
          {kelp_coral} vs best {best_three} \
-         (kelp {kelp}, coral+rock {coral_rock}, rock×3 {rock_x3}, grotto {grotto})"
+         (kelp {kelp}, coral+rock {coral_rock}, rock×3 {rock_x3}, grotto {grotto}, \
+          lagoon+rock {lagoon_rock})"
+    );
+}
+
+/// Invariant 11c — the newer reef at a budget is the better one: at its own
+/// unlock (60,000) a filled lagoon out-collects the coral it costs the same as,
+/// so the reef a later wall hands out is worth rebuilding around. The same
+/// "rebuilding pays off" proof `regrown_reef_out_collects_the_old_one` states
+/// for coral, applied to the reef that now shares that budget.
+///
+/// It is deliberately a comparison between *designed* reefs. Collection rate in
+/// this economy tracks algae housing and rock output almost alone, so the plain
+/// cheap reefs lead it outright (measured: rock×2 70,000 against coral's 54,600
+/// at the same cost, lantern×5 196,000 against every budget-5 sea) — a reef past
+/// the first is chosen for its housing mix and its character, not for out-
+/// earning a pile of rocks, and asserting otherwise would state a design the
+/// game does not have.
+#[test]
+fn a_filled_lagoon_out_collects_the_coral_it_costs_the_same_as() {
+    const WINDOW: u64 = 5_000;
+    let kind = |name: &str| {
+        Params::default()
+            .rock_kinds
+            .iter()
+            .position(|k| k.name == name)
+            .unwrap_or_else(|| panic!("no such rock kind: {name}"))
+    };
+    let (coral, lagoon_k) = (kind("coral"), kind("lagoon"));
+    let t6 = 60_000 * MICRO;
+
+    let lagoon = steady_collection_over_window(&[(lagoon_k, 0)], t6, WINDOW);
+    let coral_only = steady_collection_over_window(&[(coral, 0)], t6, WINDOW);
+
+    assert!(
+        lagoon > coral_only,
+        "a lagoon must out-collect the coral it costs the same as: {lagoon} vs {coral_only}"
     );
 }
 

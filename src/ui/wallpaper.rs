@@ -41,7 +41,10 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 
 use crate::app::{App, Phase};
-use crate::content::{self, creatures::SwimmerDef};
+use crate::content::{
+    self,
+    creatures::{Drift, SwimmerDef},
+};
 use crate::engine::{Rock, MICRO, SLOTS};
 
 /// Water background and surface-glow colors for a time-of-day phase — the
@@ -82,7 +85,7 @@ const SEDIMENT_PER_CELL: u128 = 30 * MICRO;
 /// `sprite_caps_cover_every_reachable_population` test pins them to the params.
 const MAX_ALGAE: u64 = 20;
 const MAX_PLANKTON: u64 = 15;
-const MAX_SMALL_FISH: u64 = 12;
+const MAX_SMALL_FISH: u64 = 14;
 const MAX_BIG_FISH: u64 = 7;
 
 /// The visiting whale — a pale blue-gray (152) that reads on every water
@@ -253,7 +256,7 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
     draw_algae(app, area, buf, frame, water);
     draw_plankton(app, area, buf, frame, w, h, water);
     draw_detritus(app, area, buf, frame, w, h, water);
-    draw_fish(app, area, buf, frame, h, water);
+    draw_fish(app, area, buf, frame, water);
     // The whale is drawn last so it crosses in front of every other sprite.
     draw_whale(app, area, buf, frame, water);
 }
@@ -502,7 +505,7 @@ fn draw_detritus(
     }
 }
 
-fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64, water: Color) {
+fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color) {
     let rocks = &app.state.rocks;
     if rocks.is_empty() {
         return;
@@ -520,7 +523,6 @@ fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64, water:
             area,
             buf,
             frame,
-            h,
             rock,
             i / n,
             content::def(rock.kind).small,
@@ -533,7 +535,6 @@ fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64, water:
             area,
             buf,
             frame,
-            h,
             rock,
             i / n,
             content::def(rock.kind).big,
@@ -542,25 +543,57 @@ fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, h: u64, water:
     }
 }
 
+/// The vertical sway a `Drift` adds to a swimmer's lane at `frame`: a triangle
+/// wave in whole rows, rising to `+amplitude` and falling to `-amplitude` once
+/// per period. Whole integers keep it as reproducible as every other sprite
+/// position.
+///
+/// It reads the frame and nothing else — deliberately. A per-individual phase
+/// would let one drifter sink onto the lane of the one below it, and distinct
+/// lanes per ordinal are exactly what keeps a colony's sprites off each other
+/// (see the module note on hashed freedoms). Drifting as one bloom keeps that
+/// guarantee, and matches the pulse, which is also a beat in time alone.
+fn drift_offset(drift: &Drift, frame: u64) -> i64 {
+    if drift.amplitude == 0 {
+        return 0;
+    }
+    let period = drift.period.max(1);
+    let span = 2 * drift.amplitude; // rows between the two extremes
+    let t = (frame % period) as i64;
+    // Two half-cycles: up over the first half of the period, back down over the
+    // second. Integer division alone, so the wave never leaves a whole row.
+    let walk = (2 * t * span) / period as i64;
+    let rise = if walk <= span { walk } else { 2 * span - walk };
+    rise - drift.amplitude
+}
+
 /// One swimmer on a bounded patrol around its host rock: it glides right to the
 /// window edge, then back left, staying within the rock center ± the creature's
-/// radius. The window is clamped so the whole glyph fits, so the swimmer is
+/// radius. The window is clamped so the whole sprite fits, so the swimmer is
 /// always drawn fully — never partially clipped. The creature's `reef_bias` folds
 /// the lane into the lower half so smaller tenants keep near the reef.
 /// `ordinal` (this rock's k-th swimmer of its tier) sets a distinct lane and a
 /// distinct patrol phase, so two of a tier on one rock never share a cell.
+///
+/// The swimmer's `Manner` rides on top of that one glide: a `pulse` picks which
+/// appearance the frame wears, an `under` row hangs a second row below the body,
+/// and a `drift` sways the whole sprite over its lane. All three are read from
+/// the definition, so a new drifter is content — this routine names no creature.
 #[allow(clippy::too_many_arguments)]
 fn patrol(
     area: Rect,
     buf: &mut Buffer,
     frame: u64,
-    h: u64,
     rock: &Rock,
     ordinal: u64,
     swimmer: &SwimmerDef,
     water: Color,
 ) {
-    let len = swimmer.right.len() as i64;
+    // Both appearances are measured, so the window and the lane hold still while
+    // the swimmer pulses. Cells, not bytes: a braille body is three cells and
+    // nine bytes, and the pane is counted in the former.
+    let (span, rows) = swimmer.footprint();
+    let len = span as i64;
     let min_anchor = i64::from(area.left());
     let max_anchor = i64::from(area.right()) - len; // last x where the whole glyph fits
     if max_anchor < min_anchor {
@@ -574,39 +607,63 @@ fn patrol(
         return; // window falls off the fittable strip
     }
     let travel = right - left;
+    // Which appearance this frame wears — the pulse is a beat in time, so it
+    // turns over independently of the heading picked just below.
+    let look = swimmer.look(frame);
     let (x, glyph, rightward) = if travel == 0 {
-        (left, swimmer.right, true)
+        (left, look.right, true)
     } else {
         let period = (2 * travel) as u64;
         // Phase offset per fish keeps same-rock fish out of lockstep, so even
         // two sharing a lane never coincide every frame.
         let t = ((frame / swimmer.slowdown + ordinal) % period) as i64;
         if t < travel {
-            (left + t, swimmer.right, true) // gliding right
+            (left + t, look.right, true) // gliding right
         } else {
-            (left + 2 * travel - t, swimmer.left, false) // gliding back left
+            (left + 2 * travel - t, look.left, false) // gliding back left
         }
     };
 
+    // The rows a sprite may start on: under the surface waves, high enough that
+    // its last row clears the floor, and — where the pane has room — inset far
+    // enough that the drift's whole swing stays on screen. Lanes are handed out
+    // inside that band rather than clamped into it afterwards, so two drifters
+    // can never be squeezed onto one row. For a one-row swimmer that does not
+    // drift the band is exactly the one every fish has always had.
+    let top = i64::from(area.top()) + 1;
+    let bed = i64::from(area.bottom()) - 1 - i64::from(rows);
+    if bed < top {
+        return; // pane too short to hold the whole sprite
+    }
+    let amplitude = swimmer.manner.drift.amplitude;
+    let (lo, hi) = if bed - top >= 2 * amplitude {
+        (top + amplitude, bed - amplitude)
+    } else {
+        (top, bed) // too short for the swing: the drift flattens, nothing clips
+    };
+    // Lanes are a sprite tall, so the band holds as many as fit whole: a
+    // two-row swimmer takes two rows of it, and the one below never hangs its
+    // second row over the one above.
+    let lanes = ((hi - lo + 1) / i64::from(rows)).max(1);
+
     // Lane by ordinal: distinct rows for same-rock, same-size fish so their
     // glyphs never share a cell. Small fish fold into the lower lanes (near the
-    // reef); big fish range over the full height.
-    let lane = (h - 2).max(1);
-    let row = if swimmer.reef_bias {
-        let lower = (lane / 2).max(1);
-        (lane - 1) - (ordinal % lower)
+    // reef); big fish range over the whole band.
+    let lane = if swimmer.reef_bias {
+        hi - (ordinal % (lanes / 2).max(1) as u64) as i64 * i64::from(rows)
     } else {
-        ordinal % lane
+        lo + (ordinal % lanes as u64) as i64 * i64::from(rows)
     };
-    let y = area.top() + 1 + row as u16;
+    let y = (lane + drift_offset(&swimmer.manner.drift, frame)).clamp(top, bed) as u16;
 
-    // The accent (the anglerfish's lure) sits at a fixed cell of `right`; a
+    // The accent (the anglerfish's lure) sits at a fixed cell of the body row; a
     // left-facing draw mirrors that index (`cells - 1 - index`), which only
     // lands correctly because `right` and `left` are the same length in cells
     // (pinned for every kind by content::mod::tests). An out-of-range index
     // degrades to no accent — an internal-origin fault, not a player one —
-    // rather than panicking.
-    let cells = swimmer.right.chars().count();
+    // rather than panicking. The under row wears the body color throughout: a
+    // trailing row is one shape, not a place to hide a second signal.
+    let cells = glyph.chars().count();
     let accent = swimmer
         .accent
         .filter(|&(index, _)| index < cells)
@@ -614,10 +671,38 @@ fn patrol(
             let mirrored = if rightward { index } else { cells - 1 - index };
             (mirrored, color)
         });
-    for (i, ch) in glyph.chars().enumerate() {
-        let fg = match accent {
-            Some((accent_at, color)) if i == accent_at => color,
-            _ => swimmer.color,
+    let paint = RowPaint {
+        body: swimmer.color,
+        accent,
+        water,
+    };
+    draw_sprite_row(buf, area, x, y, glyph, &paint);
+    if !look.under.is_empty() {
+        let plain = RowPaint {
+            accent: None,
+            ..paint
+        };
+        draw_sprite_row(buf, area, x, y + 1, look.under, &plain);
+    }
+}
+
+/// How a row of a swimmer's sprite is painted: its body color, the one cell (if
+/// any) that wears the accent instead, and the water behind both.
+#[derive(Clone, Copy)]
+struct RowPaint {
+    body: Color,
+    accent: Option<(usize, Color)>,
+    water: Color,
+}
+
+/// One row of a swimmer's sprite, glyph by glyph from `x` — so a character's
+/// index in the row is its column offset — with one cell allowed to wear the
+/// accent color.
+fn draw_sprite_row(buf: &mut Buffer, area: Rect, x: i64, y: u16, glyphs: &str, paint: &RowPaint) {
+    for (i, ch) in glyphs.chars().enumerate() {
+        let fg = match paint.accent {
+            Some((accent_at, accent_color)) if i == accent_at => accent_color,
+            _ => paint.body,
         };
         let mut char_buf = [0u8; 4];
         put(
@@ -626,7 +711,7 @@ fn patrol(
             x + i as i64,
             y,
             ch.encode_utf8(&mut char_buf),
-            Style::new().fg(fg).bg(water),
+            Style::new().fg(fg).bg(paint.water),
         );
     }
 }
@@ -784,6 +869,203 @@ fn mix(i: u64, salt: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content::creatures::{Drift, Look, Manner, Pulse};
+
+    /// A pane to patrol one swimmer in, and the reef it patrols around.
+    fn pane(width: u16, height: u16) -> (Rect, Rock) {
+        (
+            Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+            Rock { kind: 0, slot: 4 },
+        )
+    }
+
+    /// The rows one swimmer draws at `frame`, as `(row, glyphs)` top-first —
+    /// every cell painted in the swimmer's own color, which on an empty buffer
+    /// is the swimmer and nothing else.
+    fn sprite_rows(swimmer: &SwimmerDef, area: Rect, frame: u64) -> Vec<(u16, String)> {
+        let (_, rock) = pane(area.width, area.height);
+        let mut buf = Buffer::empty(area);
+        patrol(area, &mut buf, frame, &rock, 0, swimmer, Color::Indexed(17));
+        let mut rows: Vec<(u16, String)> = Vec::new();
+        for y in area.top()..area.bottom() {
+            let mut glyphs = String::new();
+            for x in area.left()..area.right() {
+                let cell = buf.cell((x, y)).expect("cell");
+                if cell.style().fg == Some(swimmer.color) {
+                    glyphs.push_str(cell.symbol());
+                }
+            }
+            if !glyphs.is_empty() {
+                rows.push((y, glyphs));
+            }
+        }
+        rows
+    }
+
+    /// A drifter a test composes itself: the same three modifiers the jellyfish
+    /// wears, at whatever amplitude, period and glyphs the test names. Its
+    /// point is that a second drifter is data — a definition file could say
+    /// exactly this and need no renderer change (the tests/render.rs habit of
+    /// building a manifest of one's own, applied to a creature).
+    fn drifter(amplitude: i64, period: u64, pulse_period: u64) -> SwimmerDef {
+        SwimmerDef {
+            right: "(o)",
+            left: "(o)",
+            slowdown: 4,
+            radius: 4,
+            reef_bias: true,
+            color: Color::Indexed(200),
+            accent: None,
+            manner: Manner {
+                drift: Drift { amplitude, period },
+                under: "\\|/",
+                pulse: Some(Pulse {
+                    look: Look {
+                        right: "[o]",
+                        left: "[o]",
+                        under: "|",
+                    },
+                    period: pulse_period,
+                }),
+            },
+        }
+    }
+
+    /// The drift is a triangle wave in whole rows: over one period it rises to
+    /// `+amplitude`, falls to `-amplitude`, and comes back — never further, and
+    /// never anywhere but on a row. `Drift::STILL` holds its lane forever, which
+    /// is what keeps every fish's picture the one it always had.
+    #[test]
+    fn drift_sweeps_its_amplitude_and_returns() {
+        let drift = Drift {
+            amplitude: 2,
+            period: 40,
+        };
+        let offsets: Vec<i64> = (0..40).map(|f| drift_offset(&drift, f)).collect();
+        assert_eq!(
+            offsets.iter().copied().min(),
+            Some(-2),
+            "the drift must reach its lower amplitude: {offsets:?}"
+        );
+        assert_eq!(
+            offsets.iter().copied().max(),
+            Some(2),
+            "the drift must reach its upper amplitude: {offsets:?}"
+        );
+        // A wave, not a sawtooth and not a jitter: one rise and one fall per
+        // period — the offsets climb to the peak and fall away from it, never
+        // turning in between — and every step that moves moves a single row.
+        let peak = offsets.iter().position(|&v| v == 2).expect("a peak");
+        assert!(
+            offsets[..=peak].windows(2).all(|w| w[1] >= w[0]),
+            "the drift rises to its peak without turning: {offsets:?}"
+        );
+        assert!(
+            offsets[peak..].windows(2).all(|w| w[1] <= w[0]),
+            "and falls away from it without turning: {offsets:?}"
+        );
+        assert!(
+            offsets.windows(2).all(|w| (w[1] - w[0]).abs() <= 1),
+            "the drift moves a row at a time: {offsets:?}"
+        );
+        assert_eq!(
+            offsets,
+            (40..80)
+                .map(|f| drift_offset(&drift, f))
+                .collect::<Vec<_>>(),
+            "the wave repeats every period"
+        );
+
+        for frame in 0..100 {
+            assert_eq!(
+                drift_offset(&Drift::STILL, frame),
+                0,
+                "a still swimmer never leaves its lane"
+            );
+        }
+    }
+
+    /// The three modifiers are data, not the jellyfish's own code: a second
+    /// drifter composed here — its own glyphs, its own amplitude, its own two
+    /// beats — draws two rows, pulses between its two appearances on its own
+    /// period, and swings exactly its own amplitude. Change a number in the
+    /// definition and the picture follows it; nothing in the renderer names a
+    /// creature.
+    #[test]
+    fn a_second_drifter_is_data_alone() {
+        let (area, _) = pane(40, 20);
+        let gentle = drifter(1, 20, 2);
+        let wide = drifter(3, 24, 5);
+
+        for (swimmer, amplitude) in [(&gentle, 1), (&wide, 3)] {
+            let tops: Vec<u16> = (0..48)
+                .map(|f| sprite_rows(swimmer, area, f)[0].0)
+                .collect();
+            let (lo, hi) = (
+                tops.iter().copied().min().expect("a row"),
+                tops.iter().copied().max().expect("a row"),
+            );
+            assert_eq!(
+                i64::from(hi - lo),
+                2 * amplitude,
+                "amplitude {amplitude} must swing {} rows, got {lo}..{hi}",
+                2 * amplitude
+            );
+
+            // Two rows, adjacent, in every frame — the under row hangs directly
+            // under the body row and neither is ever dropped.
+            for frame in 0..48 {
+                let rows = sprite_rows(swimmer, area, frame);
+                assert_eq!(rows.len(), 2, "frame {frame}: a two-row sprite draws two");
+                assert_eq!(rows[1].0, rows[0].0 + 1, "frame {frame}: rows are adjacent");
+            }
+        }
+
+        // Each drifter alternates on its own pulse period, independent of the
+        // other's and of which way it faces.
+        let bodies = |swimmer: &SwimmerDef, upto: u64| -> Vec<String> {
+            (0..upto)
+                .map(|f| sprite_rows(swimmer, area, f)[0].1.clone())
+                .collect()
+        };
+        assert_eq!(
+            bodies(&gentle, 8),
+            vec!["(o)", "(o)", "[o]", "[o]", "(o)", "(o)", "[o]", "[o]"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>(),
+            "period 2 holds each appearance for two frames"
+        );
+        assert_eq!(
+            bodies(&wide, 10),
+            vec!["(o)", "(o)", "(o)", "(o)", "(o)", "[o]", "[o]", "[o]", "[o]", "[o]"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>(),
+            "period 5 holds each appearance for five frames"
+        );
+    }
+
+    /// A swimmer's patrol window is measured in cells, not bytes: a braille
+    /// three-cell body fits a pane that its nine-byte encoding would call too
+    /// narrow. Without the cell count the jellyfish simply vanishes from a thin
+    /// pane — the one the tank lives in.
+    #[test]
+    fn a_braille_swimmer_is_measured_in_cells() {
+        let (area, _) = pane(6, 12);
+        let jelly = &crate::content::creatures::jellyfish::DEF;
+        let rows = sprite_rows(jelly, area, 0);
+        assert_eq!(
+            rows.first().map(|r| r.1.chars().count()),
+            Some(3),
+            "all three cells of the bell must fit a six-column pane, got {rows:?}"
+        );
+    }
 
     /// The window gate opens on roughly 1 in K windows — the rarity that makes a
     /// whale a lucky sight. Scanning a large window range, the crossing count

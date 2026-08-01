@@ -31,7 +31,10 @@ expect score <= 105000000000   # comfortably past it, not by a wild margin
 # --- the lantern sea: a center reef and an edge reef, both filled ---------
 key n
 key y
-key down                   # cycle to the last-unlocked kind: lantern
+key up                     # the kind cycle walks the manifest, and the four
+key up                     # kinds before the lantern all unlock below it — so
+key up                     # four steps forward always land on the lantern,
+key up                     # whatever unlocks after it (#23's lagoon does)
 capture ghost               # the ghost's shape names the kind; its color cannot
 key enter                  # drop it on the mid-floor slot (default cursor 4)
 key right
@@ -128,7 +131,10 @@ capture apex-b
 # --- a lantern-only budget-5 sea, at the sprite-cap ceiling ----------------
 key n
 key y
-key down                   # lantern again
+key up
+key up
+key up
+key up                     # the lantern again (four steps in, as above)
 key enter                  # slot 4
 key left
 key left

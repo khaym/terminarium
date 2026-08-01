@@ -4,7 +4,7 @@
 
 use ratatui::style::Color;
 
-use super::SwimmerDef;
+use super::{Manner, SwimmerDef};
 
 /// A pale shell pink, clear of the fish oranges.
 const SHRIMP: Color = Color::Indexed(217);
@@ -17,4 +17,5 @@ pub const DEF: SwimmerDef = SwimmerDef {
     reef_bias: true,
     color: SHRIMP,
     accent: None,
+    manner: Manner::PLAIN,
 };

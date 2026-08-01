@@ -49,7 +49,10 @@ expect score <= 74999999999   # and the budget-5 wall is still ahead
 key n
 key y                      # a new sea: the score (and its unlocks) survives
 phase day
-key down                   # cycle to the last unlocked kind — the grotto
+key up                     # the kind cycle walks the manifest, and the three
+key up                     # kinds before the grotto (rock, coral, kelp) all
+key up                     # unlock below it — so three steps forward always
+                           # land on the grotto, whatever unlocks after it
 capture ghost              # the ghost's shape names the kind; its color cannot
 key enter                  # drop it on the mid-floor slot
 key s
@@ -116,7 +119,9 @@ key right
 key right
 key right
 key right                  # slot 8: the pane's right edge
-key down                   # the grotto again
+key up
+key up
+key up                     # the grotto again (three steps in, as above)
 key enter
 key s
 expect rocks == 1
@@ -162,10 +167,14 @@ capture edge-pane-night
 resize 100x30
 key n
 key y
-key down                   # the grotto on the mid-floor slot
+key up
+key up
+key up                     # the grotto on the mid-floor slot
 key enter
 key left                   # one slot to its left
-key up                     # back around to the founding rock
+key down
+key down
+key down                   # three steps back: the founding rock
 key enter
 key s
 expect rocks == 2

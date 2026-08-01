@@ -79,9 +79,12 @@ pub struct Params {
     pub base_cost: [u128; SPECIES],
     /// Cost multiplier per owned unit.
     pub cost_growth: Ratio,
-    /// Rock kinds available to place, ordered by unlock score. Higher score
-    /// unlocks later kinds. A rock stores its kind as an index into this list,
-    /// so its order is the save format (see `content::KINDS`).
+    /// Rock kinds available to place. A rock stores its kind as an index into
+    /// this list, so the order is the save format (see `content::KINDS`) and
+    /// append-only — which also means it is not necessarily ascending in unlock
+    /// score, since a kind added later may unlock earlier than one already
+    /// shipped. Whether a kind is placeable is read from its own `unlock`, never
+    /// from its position.
     pub rock_kinds: Vec<RockKind>,
     /// Placement budget schedule: `(score threshold, budget)` pairs in
     /// ascending threshold order. The budget available at a score is the one

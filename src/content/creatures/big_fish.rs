@@ -3,7 +3,7 @@
 
 use ratatui::style::Color;
 
-use super::SwimmerDef;
+use super::{Manner, SwimmerDef};
 
 /// A warm orange, clear of the small fish's lighter tone.
 const BIG_FISH: Color = Color::Indexed(209);
@@ -16,4 +16,5 @@ pub const DEF: SwimmerDef = SwimmerDef {
     reef_bias: false,
     color: BIG_FISH,
     accent: None,
+    manner: Manner::PLAIN,
 };

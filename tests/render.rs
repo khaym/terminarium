@@ -1653,6 +1653,161 @@ fn anglerfish_lure_reads_apart_from_its_body_in_both_directions() {
     );
 }
 
+/// A lagoon filled to its housing: the seagrass base (112), six jellyfish in
+/// their lavender (183) and two turtles in their sea green (71), over a sandbar
+/// body (187) — every tenant the reef's own, none of the shared ones. The
+/// jellyfish is two rows and pulses, so its cell count is read at the
+/// least-occluded frame of a sweep (the idiom
+/// `rock_five_sea_draws_the_full_population` uses for gliding sprites): six
+/// individuals of six cells on the open-bell frame. A valid normal-play state —
+/// lagoon unlocked (score >= 60000), cost 2 within budget 3, every tier bought
+/// to its housing — and below the anchor unlock, so no landmark tints a count.
+#[test]
+fn lagoon_sea_shows_seagrass_jellyfish_and_turtle() {
+    use ratatui::style::Color;
+
+    let full = State {
+        population: [4, 4, 6, 2], // the lagoon's housing, filled
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 60_000 * MICRO,
+        rocks: vec![Rock {
+            kind: kind_index("lagoon"),
+            slot: 4,
+        }],
+        tick_count: 300,
+        started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
+    };
+    let (w, h) = (100u16, 30u16);
+    let (mut jelly_max, mut turtle_max, mut seagrass_max) = (0usize, 0usize, 0usize);
+    for frame in 0..64u64 {
+        let terminal = rendered_at_frame(full.clone(), w, h, frame);
+        let buffer = terminal.backend().buffer();
+        let (mut jelly, mut turtle, mut seagrass) = (0usize, 0usize, 0usize);
+        for (x, y) in (0..h).flat_map(|y| (0..w).map(move |x| (x, y))) {
+            match buffer.cell((x, y)).expect("cell").style().fg {
+                Some(Color::Indexed(183)) => jelly += 1,
+                Some(Color::Indexed(71)) => turtle += 1,
+                Some(Color::Indexed(112)) => seagrass += 1,
+                // The tenants are the lagoon's own, so no shared swimmer tint
+                // may appear anywhere in the sea.
+                Some(Color::Indexed(215)) => panic!("frame {frame}: a plain small fish"),
+                Some(Color::Indexed(209)) => panic!("frame {frame}: a plain big fish"),
+                _ => {}
+            }
+        }
+        jelly_max = jelly_max.max(jelly);
+        turtle_max = turtle_max.max(turtle);
+        seagrass_max = seagrass_max.max(seagrass);
+    }
+    assert_eq!(
+        jelly_max,
+        6 * 6,
+        "6 jellyfish of 6 cells (bell over tentacles) are fully drawn"
+    );
+    assert_eq!(turtle_max, 2 * 6, "both turtles show, each whole");
+    assert!(seagrass_max > 0, "the seagrass base layer shows");
+
+    // Bare of tenants, nothing overdraws the flanks: the sandbar body reads.
+    let bare = State {
+        population: [0; 4],
+        ..full
+    };
+    let terminal = rendered_terminal_with(bare, w, h);
+    let rows = rows_of(&terminal, w, h);
+    assert!(
+        rows.iter().any(|row| row.contains("▂▄▂")),
+        "the lagoon body draws a low sandbar: {rows:?}"
+    );
+    let buffer = terminal.backend().buffer();
+    assert!(
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .any(|(x, y)| {
+                let cell = buffer.cell((x, y)).expect("cell");
+                cell.symbol() == "▄" && cell.style().fg == Some(Color::Indexed(187))
+            }),
+        "the sandbar wears its own pale sand"
+    );
+}
+
+/// The thin side pane is the tank's home, so the jellyfish — the first sprite
+/// two rows tall — must keep both rows on screen there: never over the surface
+/// waves, never down in the floor row, and never a row short. Read across a
+/// frame sweep at 40x12 with a single jellyfish, whose lavender is its alone:
+/// every frame draws it whole (6 cells open, 5 contracted) on two adjacent rows
+/// inside the water. The sweep also pins the drift — over it the sprite really
+/// does change row, which is what tells a drifting bell from a fish holding its
+/// lane.
+#[test]
+fn jellyfish_keeps_both_rows_inside_the_thin_pane() {
+    use ratatui::style::Color;
+    use std::collections::HashSet;
+
+    let state = State {
+        population: [0, 0, 1, 0],
+        pool: [0; 4],
+        nutrient: 0,
+        collectable: 0,
+        currency: 0,
+        score: 60_000 * MICRO,
+        rocks: vec![Rock {
+            kind: kind_index("lagoon"),
+            slot: 4,
+        }],
+        tick_count: 300,
+        started: true,
+        anchor_pos: DEFAULT_ANCHOR_POS,
+    };
+    let (w, h) = (40u16, 12u16);
+    let mut tops: HashSet<u16> = HashSet::new();
+    let mut sizes: HashSet<usize> = HashSet::new();
+    for frame in 0..80u64 {
+        let terminal = rendered_at_frame(state.clone(), w, h, frame);
+        let buffer = terminal.backend().buffer();
+        let cells: Vec<(u16, u16)> = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                buffer.cell((x, y)).expect("cell").style().fg == Some(Color::Indexed(183))
+            })
+            .collect();
+        let rows: Vec<u16> = {
+            let mut rows: Vec<u16> = cells.iter().map(|&(_, y)| y).collect();
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        };
+        assert_eq!(
+            rows.len(),
+            2,
+            "frame {frame}: both rows of the jellyfish draw, got {cells:?}"
+        );
+        assert_eq!(rows[1], rows[0] + 1, "frame {frame}: the rows are adjacent");
+        assert!(
+            rows[0] >= 1 && rows[1] <= h - 2,
+            "frame {frame}: rows {rows:?} must clear the waves and the floor"
+        );
+        // The bell is three cells whichever frame it wears; the tentacles are
+        // three open and two contracted. Anything less is a clipped sprite.
+        let bell = cells.iter().filter(|&&(_, y)| y == rows[0]).count();
+        assert_eq!(bell, 3, "frame {frame}: the whole bell draws");
+        sizes.insert(cells.len());
+        tops.insert(rows[0]);
+    }
+    assert_eq!(
+        sizes,
+        HashSet::from([5, 6]),
+        "the bell pulses between its open and contracted frames"
+    );
+    assert!(
+        tops.len() >= 2,
+        "the jellyfish drifts vertically over the sweep, got rows {tops:?}"
+    );
+}
+
 /// The apex individual takes on its host reef's character: over kelp it is a
 /// dugong (its own tan color, fully drawn at 6 cells), never a plain big fish.
 /// The kelp base layer shows its own frond color. A valid normal-play state:

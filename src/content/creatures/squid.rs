@@ -3,7 +3,7 @@
 
 use ratatui::style::Color;
 
-use super::SwimmerDef;
+use super::{Manner, SwimmerDef};
 
 /// A cool blue-gray, clear of the jellyfish lavender it swims nearest in tone.
 const SQUID: Color = Color::Indexed(110);
@@ -16,4 +16,5 @@ pub const DEF: SwimmerDef = SwimmerDef {
     reef_bias: false,
     color: SQUID,
     accent: None,
+    manner: Manner::PLAIN,
 };

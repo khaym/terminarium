@@ -6,7 +6,7 @@
 
 use ratatui::style::Color;
 
-use super::SwimmerDef;
+use super::{Manner, SwimmerDef};
 
 /// A deep-water body, clear of every other apex's warmer tone.
 const ANGLERFISH: Color = Color::Indexed(102);
@@ -23,4 +23,5 @@ pub const DEF: SwimmerDef = SwimmerDef {
     color: ANGLERFISH,
     // `right`'s 7th cell (index 6, the trailing `*`) is the lure.
     accent: Some((6, LURE)),
+    manner: Manner::PLAIN,
 };
