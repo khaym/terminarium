@@ -31,11 +31,22 @@ fn unix_now_ms() -> u64 {
 }
 
 fn main() -> io::Result<()> {
-    // A bad flag is the caller's error: surface it and exit non-zero rather
-    // than falling back to real time (which would silently ignore the mistake).
+    // Two ways the arguments end here without a tank. A bad flag is the
+    // caller's error: surface it on stderr and exit non-zero rather than
+    // falling back to real time (which would silently ignore the mistake).
+    // Asking for the help or the version is no mistake at all — it is the
+    // answer the caller came for, so it goes to stdout and the run succeeds.
     let args: Vec<String> = std::env::args().skip(1).collect();
     let options = match cli::parse(&args) {
-        Ok(options) => options,
+        Ok(cli::Invocation::Run(options)) => options,
+        Ok(cli::Invocation::Help) => {
+            println!("{}", cli::HELP);
+            return Ok(());
+        }
+        Ok(cli::Invocation::Version) => {
+            println!("{}", cli::VERSION_LINE);
+            return Ok(());
+        }
         Err(message) => {
             eprintln!("{message}");
             std::process::exit(2);
