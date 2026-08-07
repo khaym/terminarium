@@ -3,5 +3,5 @@
 mod params;
 mod state;
 
-pub use params::{Params, Ratio, RockKind, Species, MICRO, SLOTS, SPECIES};
-pub use state::{Rock, State, ANCHOR_POS_MAX, DEFAULT_ANCHOR_POS};
+pub use params::{Params, Ratio, ReefKind, Species, MICRO, SLOTS, SPECIES};
+pub use state::{Reef, State, ANCHOR_POS_MAX, DEFAULT_ANCHOR_POS};

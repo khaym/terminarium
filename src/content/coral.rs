@@ -4,13 +4,13 @@
 use ratatui::style::Color;
 
 use super::{creatures, ReefDef, RockVariant};
-use crate::engine::{RockKind, MICRO};
+use crate::engine::{ReefKind, MICRO};
 
 /// Coral rock body — a warm rose, well clear of the orange fish tones.
 const CORAL: Color = Color::Indexed(174);
 
 pub const DEF: ReefDef = ReefDef {
-    economy: RockKind {
+    economy: ReefKind {
         name: "coral",
         cost: 2,
         unlock: 12_000 * MICRO,

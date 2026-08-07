@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::engine::{Params, Rock, State, ANCHOR_POS_MAX, SLOTS, SPECIES};
+use crate::engine::{Params, Reef, State, ANCHOR_POS_MAX, SLOTS, SPECIES};
 
 const VERSION: u32 = 4;
 
@@ -54,15 +54,18 @@ pub fn serialize(state: &State, saved_at: u64) -> String {
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let rocks = state
-        .rocks
+    let reefs = state
+        .reefs
         .iter()
         .map(|r| format!("{}:{}", r.kind, r.slot))
         .collect::<Vec<_>>()
         .join(",");
+    // The `rocks=` key keeps its shipped spelling: the field is an external
+    // contract with every v0.3.0 save already on disk, and renaming it would
+    // make those files unreadable. Only the code around it speaks of reefs.
     format!(
         "v={VERSION}\nsaved_at={saved_at}\npopulation={populations}\npool={pools}\n\
-         nutrient={}\ncollectable={}\ncurrency={}\nscore={}\nrocks={rocks}\nage={}\nstarted={}\n\
+         nutrient={}\ncollectable={}\ncurrency={}\nscore={}\nrocks={reefs}\nage={}\nstarted={}\n\
          anchor={}\n",
         state.nutrient,
         state.collectable,
@@ -75,9 +78,9 @@ pub fn serialize(state: &State, saved_at: u64) -> String {
 }
 
 /// Strict parse: every key present exactly once with the right shape, or
-/// nothing — a half-read save must never masquerade as a valid one. Rock
+/// nothing — a half-read save must never masquerade as a valid one. Reef
 /// validity is checked against `params` so a hand-edited kind cannot index out
-/// of the rock table at load time.
+/// of the kind table at load time.
 pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
     let mut version: Option<u32> = None;
     let mut saved_at: Option<u64> = None;
@@ -87,7 +90,7 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
     let mut collectable: Option<u128> = None;
     let mut currency: Option<u128> = None;
     let mut score: Option<u128> = None;
-    let mut rocks: Option<Vec<Rock>> = None;
+    let mut reefs: Option<Vec<Reef>> = None;
     let mut tick_count: Option<u64> = None;
     let mut started: Option<bool> = None;
     let mut anchor_pos: Option<u16> = None;
@@ -103,7 +106,8 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
             "collectable" => set_once(&mut collectable, value.parse().ok()?)?,
             "currency" => set_once(&mut currency, value.parse().ok()?)?,
             "score" => set_once(&mut score, value.parse().ok()?)?,
-            "rocks" => set_once(&mut rocks, parse_rocks(value, params)?)?,
+            // `rocks` is the shipped key name — see `serialize`.
+            "rocks" => set_once(&mut reefs, parse_reefs(value, params)?)?,
             "age" => set_once(&mut tick_count, value.parse().ok()?)?,
             "started" => set_once(&mut started, parse_flag(value)?)?,
             "anchor" => set_once(&mut anchor_pos, value.parse().ok()?)?,
@@ -129,25 +133,25 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
         collectable: collectable?,
         currency: currency?,
         score: score?,
-        rocks: rocks?,
+        reefs: reefs?,
         tick_count: tick_count?,
         started: started?,
         anchor_pos: anchor_pos?,
     };
-    // Reject forms a legitimate playthrough could not produce: a rock of a kind
+    // Reject forms a legitimate playthrough could not produce: a reef of a kind
     // the score has not unlocked, a placement over the score's budget, or a
     // clock that ran without the run having started.
     if state
-        .rocks
+        .reefs
         .iter()
-        .any(|r| params.rock_kinds[r.kind].unlock > state.score)
+        .any(|r| params.reef_kinds[r.kind].unlock > state.score)
     {
         return None;
     }
     let placed_cost: u32 = state
-        .rocks
+        .reefs
         .iter()
-        .map(|r| params.rock_kinds[r.kind].cost)
+        .map(|r| params.reef_kinds[r.kind].cost)
         .sum();
     if placed_cost > params.budget(state.score) {
         return None;
@@ -155,8 +159,8 @@ pub fn parse(text: &str, params: &Params) -> Option<(State, u64)> {
     if !state.started && state.tick_count > 0 {
         return None;
     }
-    if state.started && state.rocks.is_empty() {
-        return None; // starting requires a rock, and removal ends at start
+    if state.started && state.reefs.is_empty() {
+        return None; // starting requires a reef, and removal ends at start
     }
     Some((state, saved_at?))
 }
@@ -190,20 +194,20 @@ fn parse_array<T: std::str::FromStr + Copy + Default>(value: &str) -> Option<[T;
     Some(out)
 }
 
-/// `kind:slot,kind:slot,...`; empty value is an empty list. Rejects any rock a
+/// `kind:slot,kind:slot,...`; empty value is an empty list. Rejects any reef a
 /// live run could not have produced: an out-of-range kind, a slot at or beyond
-/// `SLOTS`, a duplicated slot, or more rocks than there are slots.
-fn parse_rocks(value: &str, params: &Params) -> Option<Vec<Rock>> {
+/// `SLOTS`, a duplicated slot, or more reefs than there are slots.
+fn parse_reefs(value: &str, params: &Params) -> Option<Vec<Reef>> {
     if value.is_empty() {
         return Some(Vec::new());
     }
-    let mut rocks = Vec::new();
+    let mut reefs = Vec::new();
     let mut used = [false; SLOTS as usize];
     for part in value.split(',') {
         let (kind, slot) = part.split_once(':')?;
         let kind: usize = kind.parse().ok()?;
         let slot: u8 = slot.parse().ok()?;
-        if kind >= params.rock_kinds.len() || slot >= SLOTS {
+        if kind >= params.reef_kinds.len() || slot >= SLOTS {
             return None;
         }
         let seat = &mut used[usize::from(slot)];
@@ -211,9 +215,9 @@ fn parse_rocks(value: &str, params: &Params) -> Option<Vec<Rock>> {
             return None; // a duplicated slot means the file is not ours
         }
         *seat = true;
-        rocks.push(Rock { kind, slot });
+        reefs.push(Reef { kind, slot });
     }
-    Some(rocks)
+    Some(reefs)
 }
 
 /// Write atomically (tmp + rename) so a crash mid-write cannot corrupt the
@@ -241,7 +245,7 @@ pub fn load(path: &Path, params: &Params, now: u64, time_scale: u64) -> State {
     };
     match parse(&text, params) {
         Some((mut state, saved_at)) => {
-            // Before the first rock the clock does not run, so an absence
+            // Before the first reef the clock does not run, so an absence
             // settles nothing (see State::run_started).
             if state.run_started() {
                 let elapsed = now.saturating_sub(saved_at).saturating_mul(time_scale);
@@ -267,7 +271,7 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{RockKind, MICRO};
+    use crate::engine::{ReefKind, MICRO};
 
     fn sample_state() -> State {
         State {
@@ -276,10 +280,11 @@ mod tests {
             nutrient: 1_234_567,
             collectable: 42 * MICRO,
             currency: 120 * MICRO + 1,
-            // Two base rocks (Σcost 2) need budget 2, so the score must clear
-            // the first budget step; the clock has run, so the run is started.
+            // Two base-rock reefs (Σcost 2) need budget 2, so the score must
+            // clear the first budget step; the clock has run, so the run is
+            // started.
             score: 12_000 * MICRO,
-            rocks: vec![Rock { kind: 0, slot: 0 }, Rock { kind: 0, slot: 2 }],
+            reefs: vec![Reef { kind: 0, slot: 0 }, Reef { kind: 0, slot: 2 }],
             tick_count: 137,
             started: true,
             // A non-default position, off the anchor's home column, so the
@@ -372,7 +377,7 @@ mod tests {
     fn pre_run_save_is_not_settled() {
         let path = temp_save_path("prerun");
         let params = Params::default();
-        // No rocks placed yet: the run has not started, so an absence must
+        // No reefs placed yet: the run has not started, so an absence must
         // settle nothing even though this pool would otherwise decay away.
         let mut state = State::new();
         state.pool[0] = 10 * MICRO;
@@ -386,11 +391,11 @@ mod tests {
     fn placement_in_progress_save_is_not_settled() {
         let path = temp_save_path("placing");
         let params = Params::default();
-        // Rocks placed but the run not yet committed (started=0): the clock is
+        // Reefs placed but the run not yet committed (started=0): the clock is
         // not running, so an absence settles nothing — the player returns to
         // the placement screen with the reef intact.
         let mut state = State::new();
-        assert!(state.place_rock(0, 0, &params));
+        assert!(state.place_reef(0, 0, &params));
         assert!(!state.run_started());
         store(&path, &state, 1_000).expect("store");
 
@@ -436,10 +441,12 @@ mod tests {
     }
 
     #[test]
-    fn tampered_rocks_are_rejected() {
+    fn tampered_reefs_are_rejected() {
         let p = Params::default();
         let good = serialize(&sample_state(), 1);
         assert!(parse(&good, &p).is_some());
+        // The `rocks=` spellings below are the shipped save key, not the reef
+        // vocabulary — see `serialize`.
         // Kind out of range (the default table has kinds 0..=2).
         assert!(parse(&good.replace("rocks=0:0,0:2", "rocks=3:0"), &p).is_none());
         // Slot at or beyond SLOTS.
@@ -460,9 +467,9 @@ mod tests {
         // not a load failure. #17 does not re-map old slots.
         let p = Params::default();
         let old = State {
-            // Budget 2 (score past the first step) admits the two base rocks.
+            // Budget 2 (score past the first step) admits the two base reefs.
             score: 12_000 * MICRO,
-            rocks: vec![Rock { kind: 0, slot: 0 }, Rock { kind: 0, slot: 4 }],
+            reefs: vec![Reef { kind: 0, slot: 0 }, Reef { kind: 0, slot: 4 }],
             tick_count: 42,
             started: true,
             ..State::new()
@@ -470,7 +477,7 @@ mod tests {
         let (parsed, _) =
             parse(&serialize(&old, 1), &p).expect("a save from the old 5-slot grid still loads");
         assert_eq!(
-            parsed.rocks, old.rocks,
+            parsed.reefs, old.reefs,
             "slot indices 0..=4 survive the 5->9 slot increase unchanged"
         );
     }
@@ -512,19 +519,19 @@ mod tests {
     }
 
     #[test]
-    fn a_rock_locked_above_the_score_is_rejected() {
+    fn a_reef_locked_above_the_score_is_rejected() {
         // A cost-1 kind (always within budget 1) that only unlocks at 5,000:
         // this isolates the unlock check from the budget check.
         let p = Params {
-            rock_kinds: vec![
-                RockKind {
+            reef_kinds: vec![
+                ReefKind {
                     name: "base",
                     cost: 1,
                     unlock: 0,
                     output: MICRO,
                     capacity: [1, 0, 0, 0],
                 },
-                RockKind {
+                ReefKind {
                     name: "gated",
                     cost: 1,
                     unlock: 5_000 * MICRO,
@@ -537,21 +544,21 @@ mod tests {
         };
         // Score 0: the gated kind is not yet unlocked → rejected.
         let locked = State {
-            rocks: vec![Rock { kind: 1, slot: 0 }],
+            reefs: vec![Reef { kind: 1, slot: 0 }],
             ..State::new()
         };
         assert!(parse(&serialize(&locked, 1), &p).is_none());
         // Score past the unlock (and within budget): accepted.
         let cleared = State {
             score: 5_000 * MICRO,
-            rocks: vec![Rock { kind: 1, slot: 0 }],
+            reefs: vec![Reef { kind: 1, slot: 0 }],
             ..State::new()
         };
         assert!(parse(&serialize(&cleared, 1), &p).is_some());
     }
 
     #[test]
-    fn rocks_over_budget_are_rejected() {
+    fn reefs_over_budget_are_rejected() {
         // Score 12,000 unlocks coral and grants budget 2. A rock (cost 1) plus a
         // coral (cost 2) is Σcost 3 — over budget — although both kinds are
         // unlocked, so only the budget check catches it.
@@ -559,7 +566,7 @@ mod tests {
         let over = State {
             score: 12_000 * MICRO,
             started: true,
-            rocks: vec![Rock { kind: 0, slot: 0 }, Rock { kind: 1, slot: 1 }],
+            reefs: vec![Reef { kind: 0, slot: 0 }, Reef { kind: 1, slot: 1 }],
             tick_count: 5,
             ..State::new()
         };
@@ -567,8 +574,8 @@ mod tests {
     }
 
     #[test]
-    fn a_started_run_without_rocks_is_rejected() {
-        // start_run demands at least one rock and removal ends at start, so a
+    fn a_started_run_without_reefs_is_rejected() {
+        // start_run demands at least one reef and removal ends at start, so a
         // started run with an empty reef cannot arise in play. A fresh save
         // (not started, empty reef) stays valid.
         let p = Params::default();

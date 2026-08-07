@@ -1,4 +1,4 @@
-//! The shrimp: a swarm that loiters in the shadow of its rock, patrolling
+//! The shrimp: a swarm that loiters in the shadow of its reef, patrolling
 //! tighter than any fish. Two cells, so what identifies it is how it crowds the
 //! reef and its color — not its outline.
 

@@ -8,7 +8,7 @@ use ratatui::style::Color;
 use super::FrondDef;
 
 /// A warm glow, clear of every green base layer that came before it — the
-/// reef's light is carried by its tenants, not its rock.
+/// reef's light is carried by its tenants, not its rock body.
 const LANTERN_MOSS: Color = Color::Indexed(228);
 
 pub const DEF: FrondDef = FrondDef {

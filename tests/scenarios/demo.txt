@@ -12,7 +12,7 @@ resize 100x30              # the playable size; arriving here collects the pile
 key enter                  # drop the founding rock on the mid-floor slot
 key s                      # commit the placement: the run and its clock begin
 expect started true
-expect rocks == 1
+expect reefs == 1
 
 wait 10000                 # ten seconds of rock output
 expect score >= 1          # the reef earned while we watched

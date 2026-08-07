@@ -1,19 +1,19 @@
 //! Lantern: the fifth reef, the next goal past the budget-5 wall — a small,
 //! cheap reef (cost 1) that slots into whatever room a finished budget-5 sea
-//! still has. Its rock stays unlit; the glow is carried by its tenants alone
+//! still has. Its rock body stays unlit; the glow is carried by its tenants alone
 //! (the twinkling moss, the bright plankton, and the anglerfish's lure).
 
 use ratatui::style::Color;
 
 use super::{creatures, ReefDef, RockVariant};
-use crate::engine::{RockKind, MICRO};
+use crate::engine::{ReefKind, MICRO};
 
-/// Lantern rock — a mid gray, deliberately unlit; the reef's glow lives in its
+/// Lantern rock body — a mid gray, deliberately unlit; the reef's glow lives in its
 /// tenants, not its body.
 const LANTERN_ROCK: Color = Color::Indexed(243);
 
 pub const DEF: ReefDef = ReefDef {
-    economy: RockKind {
+    economy: ReefKind {
         name: "lantern",
         cost: 1,
         unlock: 100_000 * MICRO,

@@ -86,7 +86,7 @@ pub struct App {
     /// Floor slot the placement cursor sits on, in `0..SLOTS`. Only meaningful
     /// during the placement phase (game layer, run not started).
     pub placement_cursor: u8,
-    /// Rock kind the placement cursor will drop. Cycled among the kinds the
+    /// Reef kind the placement cursor will drop. Cycled among the kinds the
     /// score has unlocked; only meaningful during the placement phase.
     pub placement_kind: usize,
     /// Whether a "start a new sea?" confirmation is awaiting a keypress. While
@@ -219,7 +219,7 @@ impl App {
     }
 
     /// Placement-phase input: move the cursor across the floor slots (h/l or
-    /// arrows, wrapping), cycle the rock kind among those unlocked (j/k or
+    /// arrows, wrapping), cycle the reef kind among those unlocked (j/k or
     /// arrows), drop the selected kind (enter) or lift the one under the cursor
     /// (backspace/delete), and commit the run (s).
     fn handle_placement(&mut self, code: KeyCode) {
@@ -234,10 +234,10 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.cycle_kind(-1),
             KeyCode::Enter => {
                 self.state
-                    .place_rock(self.placement_kind, self.placement_cursor, &self.params);
+                    .place_reef(self.placement_kind, self.placement_cursor, &self.params);
             }
             KeyCode::Backspace | KeyCode::Delete => {
-                self.state.remove_rock(self.placement_cursor);
+                self.state.remove_reef(self.placement_cursor);
             }
             KeyCode::Char('s') => {
                 self.state.start_run(&self.params);
@@ -251,8 +251,8 @@ impl App {
     /// through the list: the manifest is append-only, so a kind added later can
     /// unlock earlier and the unlocked ones are not always a prefix of it.
     fn cycle_kind(&mut self, delta: i32) {
-        let unlocked: Vec<usize> = (0..self.params.rock_kinds.len())
-            .filter(|&k| self.state.score >= self.params.rock_kinds[k].unlock)
+        let unlocked: Vec<usize> = (0..self.params.reef_kinds.len())
+            .filter(|&k| self.state.score >= self.params.reef_kinds[k].unlock)
             .collect();
         if unlocked.is_empty() {
             return;
@@ -307,7 +307,7 @@ impl App {
 
     /// Wall-clock milliseconds → whole engine ticks (1 tick = 1 s); the
     /// remainder stays accumulated so no time is lost between calls. The clock
-    /// only runs during a live run — before the first rock is placed there is
+    /// only runs during a live run — before the first reef is placed there is
     /// nothing to advance (mirroring the engine contract that the caller must
     /// not `advance` pre-placement), so accumulated time and the run clock both
     /// start fresh at placement.
@@ -351,7 +351,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{RockKind, MICRO, SPECIES};
+    use crate::engine::{ReefKind, MICRO, SPECIES};
 
     fn app_with(state: State) -> App {
         App::new(state, Params::default())
@@ -414,7 +414,7 @@ mod tests {
         // A committed run with algae housing, so the buy gate is capacity, not
         // the placement screen. currency is set after start so the seed grant
         // does not perturb the fixed amount.
-        assert!(state.place_rock(0, 0, &params));
+        assert!(state.place_reef(0, 0, &params));
         assert!(state.start_run(&params));
         state.currency = 1_000 * MICRO;
         let mut app = App::new(state, params);
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn no_time_flows_before_the_run_starts() {
         // On the placement screen (game layer, run not committed) the clock must
-        // not run: rock output is anchored to the start, so nothing should age
+        // not run: reef output is anchored to the start, so nothing should age
         // while the player is still composing.
         let mut app = app_with(State::new());
         app.on_resize(100, 30);
@@ -481,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_places_a_rock_and_s_starts_the_run() {
+    fn enter_places_a_reef_and_s_starts_the_run() {
         let mut app = app_with(State::new());
         app.on_resize(100, 30);
         let none = KeyModifiers::NONE;
@@ -492,11 +492,11 @@ mod tests {
 
         assert!(
             !app.state.run_started(),
-            "Enter drops a rock but no longer begins the run"
+            "Enter drops a reef but no longer begins the run"
         );
-        assert_eq!(app.state.rocks.len(), 1);
-        assert_eq!(app.state.rocks[0].kind, 0);
-        assert_eq!(app.state.rocks[0].slot, 5);
+        assert_eq!(app.state.reefs.len(), 1);
+        assert_eq!(app.state.reefs[0].kind, 0);
+        assert_eq!(app.state.reefs[0].slot, 5);
 
         // The clock stays still until the run is committed.
         app.on_elapsed(3_000);
@@ -542,7 +542,7 @@ mod tests {
     /// `content::tests::progression_registry_pins_cost_and_unlock`).
     #[test]
     fn placement_cycles_only_unlocked_kinds() {
-        let kind = |name: &'static str, unlock: u128| RockKind {
+        let kind = |name: &'static str, unlock: u128| ReefKind {
             name,
             cost: 1,
             unlock,
@@ -550,7 +550,7 @@ mod tests {
             capacity: [0; SPECIES],
         };
         let params = Params {
-            rock_kinds: vec![kind("amber", 0), kind("cobalt", 500 * MICRO)],
+            reef_kinds: vec![kind("amber", 0), kind("cobalt", 500 * MICRO)],
             ..Params::default()
         };
         let mut app = App::new(State::new(), params);
@@ -575,21 +575,21 @@ mod tests {
     #[test]
     fn place_several_reefs_remove_one_then_start() {
         let mut state = State::new();
-        state.score = 12_000 * MICRO; // budget 2 admits two base rocks
+        state.score = 12_000 * MICRO; // budget 2 admits two base reefs
         let mut app = app_with(state);
         app.on_resize(100, 30);
         let none = KeyModifiers::NONE;
 
-        app.on_key(KeyCode::Enter, none); // rock at cursor 4
+        app.on_key(KeyCode::Enter, none); // reef at cursor 4
         app.on_key(KeyCode::Right, none); // cursor -> 5
-        app.on_key(KeyCode::Enter, none); // rock at 5
-        assert_eq!(app.state.rocks.len(), 2);
+        app.on_key(KeyCode::Enter, none); // reef at 5
+        assert_eq!(app.state.reefs.len(), 2);
         assert!(!app.state.run_started(), "placing does not start the run");
 
-        // Backspace lifts the rock under the cursor (slot 5).
+        // Backspace lifts the reef under the cursor (slot 5).
         app.on_key(KeyCode::Backspace, none);
-        assert_eq!(app.state.rocks.len(), 1);
-        assert_eq!(app.state.rocks[0].slot, 4);
+        assert_eq!(app.state.reefs.len(), 1);
+        assert_eq!(app.state.reefs[0].slot, 4);
 
         app.on_key(KeyCode::Char('s'), none);
         assert!(app.state.run_started());
@@ -602,7 +602,7 @@ mod tests {
     #[test]
     fn new_sea_needs_confirmation_and_a_stray_key_cancels() {
         let mut state = State::new();
-        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.place_reef(0, 0, &Params::default()));
         assert!(state.start_run(&Params::default()));
         state.score = 500 * MICRO;
         state.population[0] = 2;
@@ -626,7 +626,7 @@ mod tests {
         app.on_key(KeyCode::Char('n'), none);
         app.on_key(KeyCode::Char('y'), none);
         assert!(!app.state.run_started(), "y returns to placement");
-        assert!(app.state.rocks.is_empty());
+        assert!(app.state.reefs.is_empty());
         assert_eq!(app.state.population, [0, 0, 0, 0]);
         assert_eq!(app.state.score, 500 * MICRO, "score survives the new sea");
         assert_eq!(app.placement_cursor, SLOTS / 2);
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn buy_is_suppressed_while_new_sea_is_pending() {
         let mut state = State::new();
-        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.place_reef(0, 0, &Params::default()));
         assert!(state.start_run(&Params::default()));
         state.currency = 1_000 * MICRO;
         let mut app = app_with(state);
@@ -673,7 +673,7 @@ mod tests {
     fn elapsed_milliseconds_accumulate_into_whole_ticks() {
         let mut state = State::new();
         // A live run is the precondition for ticking; place and start first.
-        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.place_reef(0, 0, &Params::default()));
         assert!(state.start_run(&Params::default()));
         state.population[0] = 1;
         let mut app = app_with(state.clone());
@@ -704,7 +704,7 @@ mod tests {
     #[test]
     fn time_scale_multiplies_elapsed_before_ticking() {
         let mut state = State::new();
-        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.place_reef(0, 0, &Params::default()));
         assert!(state.start_run(&Params::default()));
         state.population[0] = 1;
         let mut app = app_with(state.clone());
@@ -720,7 +720,7 @@ mod tests {
     #[test]
     fn time_scale_carries_the_sub_tick_remainder() {
         let mut state = State::new();
-        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.place_reef(0, 0, &Params::default()));
         assert!(state.start_run(&Params::default()));
         state.population[0] = 1;
         let mut app = app_with(state.clone());
@@ -854,7 +854,7 @@ mod tests {
 
         // During a live run.
         let mut state = State::new();
-        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.place_reef(0, 0, &Params::default()));
         assert!(state.start_run(&Params::default()));
         state.score = 75_000 * MICRO;
         let mut app = app_with(state);
@@ -873,7 +873,7 @@ mod tests {
     fn anchor_mode_swallows_other_game_keys() {
         // A live run with money and housing, so a buy key would otherwise fire.
         let mut state = State::new();
-        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.place_reef(0, 0, &Params::default()));
         assert!(state.start_run(&Params::default()));
         state.score = 75_000 * MICRO;
         state.currency = 1_000 * MICRO;
@@ -901,7 +901,7 @@ mod tests {
     #[test]
     fn entering_anchor_mode_dismisses_a_pending_new_sea_prompt() {
         let mut state = State::new();
-        assert!(state.place_rock(0, 0, &Params::default()));
+        assert!(state.place_reef(0, 0, &Params::default()));
         assert!(state.start_run(&Params::default()));
         state.score = 75_000 * MICRO;
         let mut app = app_with(state);

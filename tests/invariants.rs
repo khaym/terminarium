@@ -15,20 +15,20 @@ fn populated_state() -> State {
     s
 }
 
-/// Invariant 1 — conservation: with rocks placed, the only things that create
-/// living matter are photosynthesis and rock output. Exact equality, every
+/// Invariant 1 — conservation: with reefs placed, the only things that create
+/// living matter are photosynthesis and reef output. Exact equality, every
 /// tick.
 #[test]
 fn conservation_per_tick() {
     let p = Params::default();
     let mut s = populated_state();
-    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_reef(0, 0, &p));
     assert!(s.start_run(&p));
-    let rock_output = p.rock_kinds[0].output;
+    let reef_output = p.reef_kinds[0].output;
     for _ in 0..10_000 {
         let before = s.biomass();
         s.tick(&p);
-        let created = u128::from(s.population[0]) * p.photosynthesis + rock_output;
+        let created = u128::from(s.population[0]) * p.photosynthesis + reef_output;
         assert_eq!(s.biomass(), before + created);
     }
 }
@@ -41,7 +41,7 @@ fn conservation_across_operations() {
     let mut s = populated_state();
 
     let before = s.biomass();
-    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_reef(0, 0, &p));
     assert_eq!(s.biomass(), before, "placement moves no biomass");
 
     let before_total = s.biomass() + s.currency;
@@ -57,8 +57,8 @@ fn advance_is_compositional() {
     let p = Params::default();
     let mut whole = populated_state();
     let mut split = populated_state();
-    assert!(whole.place_rock(0, 0, &p));
-    assert!(split.place_rock(0, 0, &p));
+    assert!(whole.place_reef(0, 0, &p));
+    assert!(split.place_reef(0, 0, &p));
     assert!(whole.start_run(&p));
     assert!(split.start_run(&p));
 
@@ -75,7 +75,7 @@ fn advance_is_compositional() {
 fn determinism_under_operation_script() {
     let p = Params::default();
     let script = |s: &mut State| {
-        s.place_rock(0, 0, &p);
+        s.place_reef(0, 0, &p);
         s.start_run(&p);
         for t in 0..600u64 {
             s.tick(&p);
@@ -135,7 +135,7 @@ fn cost_curve_saturates_instead_of_wrapping() {
 fn first_algae_bootstraps_from_rock_within_15s() {
     let p = Params::default();
     let mut s = State::new();
-    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_reef(0, 0, &p));
     assert!(s.start_run(&p));
 
     let mut seconds = 0u64;
@@ -148,10 +148,10 @@ fn first_algae_bootstraps_from_rock_within_15s() {
         }
         assert!(
             seconds < 15,
-            "first algae must be affordable within 15s of rock output"
+            "first algae must be affordable within 15s of reef output"
         );
     }
-    println!("first algae bought after {seconds}s of rock output");
+    println!("first algae bought after {seconds}s of reef output");
 }
 
 /// Invariant 6 — first wall distance: from one base rock plus one algae, the
@@ -163,7 +163,7 @@ fn first_wall_at_two_to_three_peeks() {
     const PEEK_SECONDS: u64 = 90;
 
     let mut s = State::new();
-    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_reef(0, 0, &p));
     assert!(s.start_run(&p));
     s.population[Species::Algae as usize] = 1;
 
@@ -250,7 +250,7 @@ fn detritus_cycle_sustains_and_stays_bounded() {
 fn buy_is_capped_by_capacity() {
     let p = Params::default();
     let mut s = State::new();
-    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_reef(0, 0, &p));
     s.currency = u128::MAX / 2; // never the limiting factor
 
     let cap = s.capacity(Species::Algae as usize, &p);
@@ -276,7 +276,7 @@ fn buy_is_capped_by_capacity() {
 fn steady_state_after_capacity_is_filled() {
     let p = Params::default();
     let mut s = State::new();
-    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_reef(0, 0, &p));
     assert!(s.start_run(&p));
 
     // Fill to the base rock's housing: [4, 3, 2, 1].
@@ -336,7 +336,7 @@ fn a_new_sea_is_buyable_the_instant_currency_arrives() {
     let algae = Species::Algae as usize;
     let mut s = State::new();
     s.score = 30_000 * MICRO;
-    assert!(s.place_rock(kelp, 0, &p));
+    assert!(s.place_reef(kelp, 0, &p));
     assert!(s.start_run(&p));
 
     assert_eq!(
@@ -345,7 +345,7 @@ fn a_new_sea_is_buyable_the_instant_currency_arrives() {
     );
     assert_eq!(
         s.capacity(algae, &p),
-        p.rock_kinds[kelp].capacity[algae],
+        p.reef_kinds[kelp].capacity[algae],
         "kelp housing counts from placement, not after an emergence delay"
     );
 
@@ -359,7 +359,7 @@ fn a_new_sea_is_buyable_the_instant_currency_arrives() {
     assert_eq!(s.population[algae], 1);
 }
 
-/// Invariant 10 — housing is immediate: a placed rock's capacity counts from
+/// Invariant 10 — housing is immediate: a placed reef's capacity counts from
 /// the moment the run starts and never depends on elapsed time. (#22 removed
 /// the emergence delay — placement is the only thing that gates housing, so a
 /// new sea has full capacity at tick 0.)
@@ -367,10 +367,10 @@ fn a_new_sea_is_buyable_the_instant_currency_arrives() {
 fn housing_counts_from_placement_regardless_of_time() {
     let p = Params::default();
     let mut s = State::new();
-    assert!(s.place_rock(0, 0, &p)); // base rock, housing [4, 3, 2, 1]
+    assert!(s.place_reef(0, 0, &p)); // base rock, housing [4, 3, 2, 1]
     assert!(s.start_run(&p));
 
-    let expected: Vec<u32> = (0..4).map(|i| p.rock_kinds[0].capacity[i]).collect();
+    let expected: Vec<u32> = (0..4).map(|i| p.reef_kinds[0].capacity[i]).collect();
 
     // At tick 0, before any advance, full housing is already available.
     assert_eq!(s.tick_count, 0);
@@ -393,29 +393,29 @@ fn housing_counts_from_placement_regardless_of_time() {
     }
 }
 
-/// The index a kind's name resolves to in `Params::default().rock_kinds` — which
-/// is also `Rock::kind`. A reef a test names is looked up here rather than
+/// The index a kind's name resolves to in `Params::default().reef_kinds` — which
+/// is also `Reef::kind`. A reef a test names is looked up here rather than
 /// written as a literal, since the manifest is append-only and a kind joining it
 /// must not silently renumber the reef another test meant.
 fn kind_index(name: &str) -> usize {
     Params::default()
-        .rock_kinds
+        .reef_kinds
         .iter()
         .position(|k| k.name == name)
-        .unwrap_or_else(|| panic!("no such rock kind: {name}"))
+        .unwrap_or_else(|| panic!("no such reef kind: {name}"))
 }
 
 /// Fill every species to the housing the given reef provides, then converge and
 /// measure the collectable gained over a window — the steady collection rate of
 /// a filled tank.
-fn steady_collection_over_window(rocks: &[(usize, u8)], score: u128, window: u64) -> u128 {
+fn steady_collection_over_window(reefs: &[(usize, u8)], score: u128, window: u64) -> u128 {
     let p = Params::default();
     let mut s = State::new();
     s.score = score;
-    for &(kind, slot) in rocks {
+    for &(kind, slot) in reefs {
         assert!(
-            s.place_rock(kind, slot, &p),
-            "reef {rocks:?} must place within unlock/budget at score {score}"
+            s.place_reef(kind, slot, &p),
+            "reef {reefs:?} must place within unlock/budget at score {score}"
         );
     }
     assert!(s.start_run(&p));
@@ -458,14 +458,14 @@ fn regrown_reef_out_collects_the_old_one() {
 /// Fill the given reef to housing, converge, and read the living biomass (the
 /// species pools) — the steady stock a filled tank holds, independent of how
 /// often surplus is collected (collection never touches the pools).
-fn steady_living_biomass(rocks: &[(usize, u8)], score: u128) -> u128 {
+fn steady_living_biomass(reefs: &[(usize, u8)], score: u128) -> u128 {
     let p = Params::default();
     let mut s = State::new();
     s.score = score;
-    for &(kind, slot) in rocks {
+    for &(kind, slot) in reefs {
         assert!(
-            s.place_rock(kind, slot, &p),
-            "reef {rocks:?} must place within unlock/budget at score {score}"
+            s.place_reef(kind, slot, &p),
+            "reef {reefs:?} must place within unlock/budget at score {score}"
         );
     }
     assert!(s.start_run(&p));
@@ -580,7 +580,7 @@ fn a_filled_lagoon_out_collects_the_coral_it_costs_the_same_as() {
 /// anchor stops meaning anything and the reef ordering reads backwards.
 ///
 /// Why *kelp* is the anchor and not the nearest reef by cost: steady collection
-/// in this economy tracks algae housing and rock output almost alone. The tiers
+/// in this economy tracks algae housing and reef output almost alone. The tiers
 /// above the algae move biomass around and return it as detritus, so they never
 /// lift the rate — which is why the grotto, at cost 3 with 2 algae, collects
 /// exactly what the cost-2 coral does (measured: both 54,600 per 5,000 ticks at
@@ -617,7 +617,7 @@ fn first_unlock_lands_within_twelve_peeks_of_the_wall() {
     let t1 = 12_000 * MICRO;
 
     let mut s = State::new();
-    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_reef(0, 0, &p));
     assert!(s.start_run(&p));
     let cap: [u32; 4] = [
         s.capacity(0, &p),
@@ -697,7 +697,7 @@ fn collect_accumulates_lifetime_score() {
 fn reset_keeps_score_and_clears_the_run() {
     let p = Params::default();
     let mut s = State::new();
-    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_reef(0, 0, &p));
     assert!(s.start_run(&p));
     s.advance(200, &p);
     s.collect();
@@ -715,7 +715,7 @@ fn reset_keeps_score_and_clears_the_run() {
     assert_eq!(s.nutrient, 0);
     assert_eq!(s.collectable, 0);
     assert_eq!(s.currency, 0);
-    assert!(s.rocks.is_empty());
+    assert!(s.reefs.is_empty());
     assert_eq!(s.tick_count, 0);
     assert!(!s.run_started());
 }
@@ -730,7 +730,7 @@ fn anchor_position_stays_out_of_the_economy() {
     let p = Params::default();
     let base = {
         let mut s = populated_state();
-        assert!(s.place_rock(0, 0, &p));
+        assert!(s.place_reef(0, 0, &p));
         assert!(s.start_run(&p));
         s
     };
@@ -768,12 +768,12 @@ fn placement_is_gated_by_unlock_score() {
     let p = Params::default();
     let mut s = State::new();
     // Coral (kind 1) unlocks at 12,000; below that, place fails.
-    assert!(!s.place_rock(1, 0, &p), "coral is locked below its unlock");
-    assert!(s.rocks.is_empty());
+    assert!(!s.place_reef(1, 0, &p), "coral is locked below its unlock");
+    assert!(s.reefs.is_empty());
 
     s.score = 12_000 * MICRO; // clears coral's unlock and grants budget 2
     assert!(
-        s.place_rock(1, 0, &p),
+        s.place_reef(1, 0, &p),
         "coral places once unlocked and in budget"
     );
 }
@@ -793,9 +793,9 @@ fn budget_grows_in_steps_and_gates_placement() {
 
     // At score 0 the budget is 1: one base rock places, a second does not.
     let mut s = State::new();
-    assert!(s.place_rock(0, 0, &p));
-    assert!(!s.place_rock(0, 1, &p), "budget 1 admits only one rock");
-    assert_eq!(s.rocks.len(), 1);
+    assert!(s.place_reef(0, 0, &p));
+    assert!(!s.place_reef(0, 1, &p), "budget 1 admits only one reef");
+    assert_eq!(s.reefs.len(), 1);
 }
 
 /// Invariant — every kind is placeable: a kind costing more than the largest
@@ -813,7 +813,7 @@ fn every_kind_costs_within_the_largest_budget() {
         .map(|&(_, budget)| budget)
         .max()
         .expect("a budget schedule");
-    for rk in &p.rock_kinds {
+    for rk in &p.reef_kinds {
         assert!(
             rk.cost <= max_budget,
             "{} costs {} while the budget never passes {max_budget}: it can never be placed",
@@ -831,23 +831,23 @@ fn placement_gates_close_at_start_and_seed_is_once_per_run() {
     let mut s = State::new();
     s.score = 30_000 * MICRO; // budget 3, every kind unlocked
 
-    assert!(s.place_rock(0, 0, &p));
-    assert!(s.place_rock(0, 1, &p));
-    assert!(s.remove_rock(1), "removal works before start");
-    assert_eq!(s.rocks.len(), 1);
+    assert!(s.place_reef(0, 0, &p));
+    assert!(s.place_reef(0, 1, &p));
+    assert!(s.remove_reef(1), "removal works before start");
+    assert_eq!(s.reefs.len(), 1);
     assert_eq!(s.currency, 0, "placement grants no currency");
 
     assert!(s.start_run(&p));
     assert_eq!(s.currency, p.seed_currency, "start grants the seed once");
     assert!(!s.start_run(&p), "cannot start twice");
     assert_eq!(s.currency, p.seed_currency, "no second seed");
-    assert!(!s.place_rock(0, 2, &p), "no placing after start");
-    assert!(!s.remove_rock(0), "no removing after start");
+    assert!(!s.place_reef(0, 2, &p), "no placing after start");
+    assert!(!s.remove_reef(0), "no removing after start");
 
     // A new sea, a fresh placement, and the seed is granted again — once.
     s.reset();
     assert_eq!(s.currency, 0);
-    assert!(s.place_rock(0, 0, &p));
+    assert!(s.place_reef(0, 0, &p));
     assert!(s.start_run(&p));
     assert_eq!(s.currency, p.seed_currency, "each run seeds exactly once");
 }

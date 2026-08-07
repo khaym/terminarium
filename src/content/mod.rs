@@ -1,4 +1,4 @@
-//! Reef kind content: what a rock kind *is*, one file per kind.
+//! Reef kind content: what a reef kind *is*, one file per kind.
 //!
 //! A kind is an economy row (what it costs, when it unlocks, what it sheds, how
 //! much it houses), the look of its own rock body, and the creature it houses at
@@ -24,7 +24,7 @@
 use ratatui::style::Color;
 
 use self::creatures::{DotDef, FrondDef, SwimmerDef};
-use crate::engine::RockKind;
+use crate::engine::ReefKind;
 
 pub mod creatures;
 
@@ -38,8 +38,8 @@ macro_rules! kinds {
 
         /// Every kind the game knows, in unlock order.
         ///
-        /// A kind's position here *is* its identity in a save file (`Rock::kind`
-        /// is an index into this list, and so into `Params::rock_kinds`), which
+        /// A kind's position here *is* its identity in a save file (`Reef::kind`
+        /// is an index into this list, and so into `Params::reef_kinds`), which
         /// makes the order append-only: reordering these entries silently
         /// rewrites what every save already on disk means.
         pub const KINDS: &[&ReefDef] = &[$(&$kind::DEF),+];
@@ -53,8 +53,8 @@ kinds!(rock, coral, kelp, grotto, lantern, lagoon);
 /// The engine reads the economy, the wallpaper reads the body and follows the
 /// tenant references, and neither needs to know how many kinds exist.
 pub struct ReefDef {
-    /// The row this kind contributes to `Params::rock_kinds`.
-    pub economy: RockKind,
+    /// The row this kind contributes to `Params::reef_kinds`.
+    pub economy: ReefKind,
     /// Look of this kind's rock body.
     pub rock: RockVariant,
     /// The creature this kind houses at each economy tier, in
@@ -84,8 +84,8 @@ pub fn def(kind: usize) -> &'static ReefDef {
 }
 
 /// The economy rows of every kind, in manifest order — what `Params::default`
-/// fills `rock_kinds` with.
-pub fn rock_kinds() -> Vec<RockKind> {
+/// fills `reef_kinds` with.
+pub fn reef_kinds() -> Vec<ReefKind> {
     KINDS.iter().map(|def| def.economy.clone()).collect()
 }
 
@@ -131,7 +131,7 @@ mod tests {
         );
     }
 
-    /// The manifest order is the save format: a rock stores its kind as an
+    /// The manifest order is the save format: a reef stores its kind as an
     /// index, so kinds may be appended but the ones already shipped can never
     /// move — a swap would silently turn every saved coral into a kelp. Pinning
     /// the shipped kinds as a *prefix* states exactly that: appending a kind

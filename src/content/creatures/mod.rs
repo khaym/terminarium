@@ -7,7 +7,7 @@
 //! apart. Adding a creature is one new file here, its `mod` line below, and the
 //! one reference in the reef that hosts it.
 //!
-//! Three archetypes cover the four tiers: fronds rooted to a rock (algae),
+//! Three archetypes cover the four tiers: fronds rooted to a reef (algae),
 //! drifting dots (plankton), and swimmers on a patrol (the fish and the dugong).
 //! The wallpaper holds one drawing routine per archetype, so a new creature of
 //! an existing archetype is data alone — no renderer edit.
@@ -46,7 +46,7 @@ pub mod squid;
 pub mod teal_fronds;
 pub mod turtle;
 
-/// A frond rooted to its host rock: the base species (algae) of a reef. Every
+/// A frond rooted to its host reef: the base species (algae) of a reef. Every
 /// reef's base layer looks different, so a reef reads by its greenery alone.
 pub struct FrondDef {
     /// Two sway frames of the frond glyph.
@@ -54,7 +54,7 @@ pub struct FrondDef {
     pub color: Color,
 }
 
-/// A speck drifting near its host rock: the plankton tier, one glyph per
+/// A speck drifting near its host reef: the plankton tier, one glyph per
 /// individual.
 pub struct DotDef {
     /// Four dot glyphs, cycled across a colony so neighbours differ.
@@ -62,15 +62,15 @@ pub struct DotDef {
     pub color: Color,
 }
 
-/// A swimmer on a bounded patrol around its host rock — the fish tiers and the
-/// dugong. Keyed only by the host rock's kind, so it stays a pure function of
+/// A swimmer on a bounded patrol around its host reef — the fish tiers and the
+/// dugong. Keyed only by the host reef's kind, so it stays a pure function of
 /// (state, frame) like every other sprite.
 pub struct SwimmerDef {
     pub right: &'static str,
     pub left: &'static str,
     /// Frames per column step; higher is slower (the dugong ambles).
     pub slowdown: u64,
-    /// Patrol radius, in cells either side of the host rock. Small tenants stay
+    /// Patrol radius, in cells either side of the host reef. Small tenants stay
     /// tight to the reef; an apex swimmer sweeps a wider, statelier beat.
     pub radius: i64,
     /// Folds the swimmer's lane into the pane's lower half, keeping it down near

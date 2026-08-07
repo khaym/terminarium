@@ -16,7 +16,7 @@ resize 100x30              # the playable size: the HUD and every key live here
 key enter                  # the founding rock on the mid-floor slot
 key s
 expect started true
-expect rocks == 1
+expect reefs == 1
 
 # --- the climb to the grotto's unlock -------------------------------------
 wait 2000000               # a bare reef sheds slowly: ~2 score/s
@@ -57,7 +57,7 @@ capture ghost              # the ghost's shape names the kind; its color cannot
 key enter                  # drop it on the mid-floor slot
 key s
 expect started true
-expect rocks == 1
+expect reefs == 1
 
 # Fill the grotto's housing ([2, 3, 7, 2] — 14 individuals, ~19,000 currency).
 wait 3000000
@@ -124,7 +124,7 @@ key up
 key up                     # the grotto again (three steps in, as above)
 key enter
 key s
-expect rocks == 1
+expect reefs == 1
 wait 3000000
 key 1
 key 1
@@ -177,7 +177,7 @@ key down
 key down                   # three steps back: the founding rock
 key enter
 key s
-expect rocks == 2
+expect reefs == 2
 wait 4000000
 key 1
 key 1

@@ -3,18 +3,18 @@
 //! hash, so a given (state, frame) always renders the same picture (which is
 //! what makes snapshot regression possible).
 //!
-//! The placed rock is the scene's center of mass: sediment mounds under it,
+//! The placed reef is the scene's center of mass: sediment mounds under it,
 //! algae attach to its sides, detritus rains from its neighbourhood, and the
-//! swimming life patrols a bounded window around it (each rock its own reef).
-//! So the rock -> settle -> collect causality, and where the reef sits, read
+//! swimming life patrols a bounded window around it (one window per reef).
+//! So the reef -> settle -> collect causality, and where the reef sits, read
 //! from position alone, without a word of text.
 //!
 //! Sprite positions are assigned from an individual's ordinal within its host
-//! rock, not drawn from an independent hash: distinct ordinals map to distinct
+//! reef, not drawn from an independent hash: distinct ordinals map to distinct
 //! in-pane columns (algae, plankton) or lanes/phases (fish), so every bought
 //! individual shows wherever the pane has room, and no two of a kind within a
-//! rock's colony share a cell. (Colonies on different rocks can still cross —
-//! the first run places a single rock; multi-rock spacing is a later concern.)
+//! reef's colony share a cell. (Colonies on different reefs can still cross —
+//! the first run places a single reef; multi-reef spacing is a later concern.)
 //! The `mix()` hash is left only for freedoms that cannot cause overlap (frond
 //! height and sway, plankton drift, patrol phase).
 //!
@@ -45,7 +45,7 @@ use crate::content::{
     self,
     creatures::{Drift, SwimmerDef},
 };
-use crate::engine::{Rock, MICRO, SLOTS};
+use crate::engine::{Reef, MICRO, SLOTS};
 
 /// Water background and surface-glow colors for a time-of-day phase — the
 /// confirmed indexed-256 palette (work/render-observations.md). Night carries
@@ -150,7 +150,7 @@ const ANCHOR_IRON: u8 = 66;
 const ANCHOR_HIGHLIGHT: u8 = 109;
 const ANCHOR_RUST: u8 = 94;
 /// The tone the whole anchor is relit in while the player is moving it — the
-/// grabbed gold game.rs uses for a grabbed rock, so "picked up, shape kept"
+/// grabbed gold game.rs uses for a grabbed reef, so "picked up, shape kept"
 /// reads the same across both.
 const ANCHOR_GRABBED: u8 = 222;
 
@@ -244,11 +244,11 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
     let w = u64::from(area.width);
     let h = u64::from(area.height);
 
-    // Before a rock is placed the tank is an empty sea: waves only. Every draw
-    // below keys off the rocks (or off state that is zero pre-placement), so an
+    // Before a reef is placed the tank is an empty sea: waves only. Every draw
+    // below keys off the reefs (or off state that is zero pre-placement), so an
     // empty state renders just the water — the wallpaper grammar is unchanged.
     // The anchor (score-gated) and whale (biomass-gated) key off their own
-    // gates, not the rocks, so they can appear on an otherwise empty sea.
+    // gates, not the reefs, so they can appear on an otherwise empty sea.
     fill_water(area, buf, frame, water, surface);
     draw_sediment(app, area, buf, water);
     draw_anchor(app, area, buf, water);
@@ -283,22 +283,22 @@ fn fill_water(area: Rect, buf: &mut Buffer, frame: u64, water: Color, surface: C
 
 /// Floor column a slot maps to: the slot's center, `(slot*2+1)*w / (2*SLOTS)`.
 /// Placement and rendering share this map so the preview lands where the real
-/// rock will.
+/// reef will.
 pub(crate) fn slot_center_x(area: Rect, slot: u8) -> u16 {
     let w = u64::from(area.width);
     let cx = ((u64::from(slot) * 2 + 1) * w) / (2 * u64::from(SLOTS));
     area.left() + cx as u16
 }
 
-/// Mean floor column of the placed rocks (a single rock's own column in the
+/// Mean floor column of the placed reefs (a single reef's own column in the
 /// first run). Used to anchor the sediment mound directly under the reef.
-fn rock_centroid_x(app: &App, area: Rect) -> u16 {
-    let rocks = &app.state.rocks;
-    let sum: u64 = rocks
+fn reef_centroid_x(app: &App, area: Rect) -> u16 {
+    let reefs = &app.state.reefs;
+    let sum: u64 = reefs
         .iter()
         .map(|r| u64::from(slot_center_x(area, r.slot)))
         .sum();
-    (sum / rocks.len() as u64) as u16
+    (sum / reefs.len() as u64) as u16
 }
 
 /// A small block-glyph rock cluster sitting on the floor at column `x`. The
@@ -343,14 +343,14 @@ pub(crate) fn draw_slot_marker(
 
 fn draw_rocks(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
     let y = area.bottom() - 1;
-    for rock in &app.state.rocks {
-        let color = content::def(rock.kind).rock.color;
+    for reef in &app.state.reefs {
+        let color = content::def(reef.kind).rock.color;
         draw_rock(
             area,
             buf,
-            slot_center_x(area, rock.slot),
+            slot_center_x(area, reef.slot),
             y,
-            rock.kind,
+            reef.kind,
             color,
             water,
         );
@@ -359,11 +359,11 @@ fn draw_rocks(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
 
 /// Collected-in-waiting surplus piles up as a mound on the tank floor, centered
 /// under the reef (peeking, which collects, visibly clears it). Contiguous so
-/// it reads as sediment — scattered cells read as screen noise. The rock is
-/// drawn over the mound's center, so a wider mound shows detritus wings around
+/// it reads as sediment — scattered cells read as screen noise. The rock body
+/// is drawn over the mound's center, so a wider mound shows detritus wings around
 /// the reef base. Abundance stays readable without a single digit.
 fn draw_sediment(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
-    if app.state.rocks.is_empty() {
+    if app.state.reefs.is_empty() {
         return;
     }
     let max = u128::from(area.width.saturating_sub(2));
@@ -372,7 +372,7 @@ fn draw_sediment(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
         return;
     }
     let y = area.bottom() - 1;
-    let center = rock_centroid_x(app, area);
+    let center = reef_centroid_x(app, area);
     let start = center
         .saturating_sub(cells / 2)
         .max(area.left())
@@ -390,23 +390,23 @@ fn draw_sediment(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
     }
 }
 
-/// Algae attach to the sides of their host rock (never dead-center, so the rock
-/// still reads), each frond in its own in-pane flank column. Which frond grows
+/// Algae attach to the sides of their host reef (never dead-center, so the rock
+/// body still reads), each frond in its own in-pane flank column. Which frond grows
 /// there comes from the creature the host kind houses at the base tier.
 fn draw_algae(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color) {
-    if app.state.rocks.is_empty() {
+    if app.state.reefs.is_empty() {
         return;
     }
-    let n = app.state.rocks.len() as u64;
+    let n = app.state.reefs.len() as u64;
     let count = u64::from(app.state.population[0])
         .min(MAX_ALGAE)
         .min(u64::from(area.width) / 4);
     let floor = area.bottom() - 1;
     for i in 0..count {
-        let rock = &app.state.rocks[(i % n) as usize];
-        let ordinal = i / n; // this rock's k-th frond
-        let algae = content::def(rock.kind).algae;
-        let center = slot_center_x(area, rock.slot);
+        let reef = &app.state.reefs[(i % n) as usize];
+        let ordinal = i / n; // this reef's k-th frond
+        let algae = content::def(reef.kind).algae;
+        let center = slot_center_x(area, reef.slot);
         // One in-pane flank column per frond; injective in the ordinal, so N
         // fronds show as N columns wherever the pane has room. `None` means no
         // usable column left (a pane too narrow to hold another).
@@ -435,8 +435,8 @@ fn draw_algae(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color)
 }
 
 /// Plankton gather around the reef, each in its own in-pane column fanned out
-/// from a rock and drifting vertically. Distinct columns mean two plankton on a
-/// rock never share a cell at any frame, yet the drift still reads as life, not
+/// from a reef and drifting vertically. Distinct columns mean two plankton on a
+/// reef never share a cell at any frame, yet the drift still reads as life, not
 /// a fixed cluster. Which drifter it is comes from the host kind's definition.
 fn draw_plankton(
     app: &App,
@@ -447,18 +447,18 @@ fn draw_plankton(
     h: u64,
     water: Color,
 ) {
-    if app.state.rocks.is_empty() {
+    if app.state.reefs.is_empty() {
         return;
     }
-    let n = app.state.rocks.len() as u64;
+    let n = app.state.reefs.len() as u64;
     let count = u64::from(app.state.population[1]).min(MAX_PLANKTON);
     let lane = (h - 2).max(1);
     for i in 0..count {
-        let rock = &app.state.rocks[(i % n) as usize];
+        let reef = &app.state.reefs[(i % n) as usize];
         let ordinal = i / n;
-        let plankton = content::def(rock.kind).plankton;
-        let center = slot_center_x(area, rock.slot);
-        // One in-pane column per plankton (fan out from the rock).
+        let plankton = content::def(reef.kind).plankton;
+        let center = slot_center_x(area, reef.slot);
+        // One in-pane column per plankton (fan out from the reef).
         let Some(x) = colony_column(area, i64::from(center), ordinal) else {
             continue;
         };
@@ -476,10 +476,10 @@ fn draw_plankton(
 }
 
 /// Falling specks hint at the detritus rain feeding the floor — raining from
-/// the reef's neighbourhood down toward its mound. A placed rock always sheds,
+/// the reef's neighbourhood down toward its mound. A placed reef always sheds,
 /// so one speck is the baseline (the rain shows the reef is producing); the
 /// count grows with the collectable stock. This keeps the founding causality
-/// (rock -> settle -> collect) on screen through the pre-purchase minute, when
+/// (reef -> settle -> collect) on screen through the pre-purchase minute, when
 /// the game layer collects surplus every second and the stock sits near zero.
 fn draw_detritus(
     app: &App,
@@ -490,14 +490,14 @@ fn draw_detritus(
     h: u64,
     water: Color,
 ) {
-    if app.state.rocks.is_empty() {
+    if app.state.reefs.is_empty() {
         return;
     }
     let count = (1 + app.state.collectable / (15 * MICRO)).min(5) as u64;
     let lane = (h - 2).max(1);
     for i in 0..count {
-        let rock = &app.state.rocks[(i as usize) % app.state.rocks.len()];
-        let center = slot_center_x(area, rock.slot);
+        let reef = &app.state.reefs[(i as usize) % app.state.reefs.len()];
+        let center = slot_center_x(area, reef.slot);
         let offset = (mix(i, 23) % 7) as i64 - 3; // fall near the reef
         let x = i64::from(center) + offset;
         let y = area.top() + 1 + ((mix(i, 29) + frame / 2) % lane) as u16;
@@ -506,38 +506,38 @@ fn draw_detritus(
 }
 
 fn draw_fish(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color) {
-    let rocks = &app.state.rocks;
-    if rocks.is_empty() {
+    let reefs = &app.state.reefs;
+    if reefs.is_empty() {
         return;
     }
-    let n = rocks.len() as u64;
+    let n = reefs.len() as u64;
     let small = u64::from(app.state.population[2]).min(MAX_SMALL_FISH);
     let big = u64::from(app.state.population[3]).min(MAX_BIG_FISH);
     // Which swimmer each tier is comes from the host kind's definition, and the
     // definition carries its own beat: small fish patrol a tight window low near
     // their reef, an apex individual sweeps a wider window and ranges higher.
-    // Each stays bounded to its assigned rock.
+    // Each stays bounded to its assigned reef.
     for i in 0..small {
-        let rock = &rocks[(i % n) as usize];
+        let reef = &reefs[(i % n) as usize];
         patrol(
             area,
             buf,
             frame,
-            rock,
+            reef,
             i / n,
-            content::def(rock.kind).small,
+            content::def(reef.kind).small,
             water,
         );
     }
     for i in 0..big {
-        let rock = &rocks[(i % n) as usize];
+        let reef = &reefs[(i % n) as usize];
         patrol(
             area,
             buf,
             frame,
-            rock,
+            reef,
             i / n,
-            content::def(rock.kind).big,
+            content::def(reef.kind).big,
             water,
         );
     }
@@ -567,13 +567,13 @@ fn drift_offset(drift: &Drift, frame: u64) -> i64 {
     rise - drift.amplitude
 }
 
-/// One swimmer on a bounded patrol around its host rock: it glides right to the
-/// window edge, then back left, staying within the rock center ± the creature's
+/// One swimmer on a bounded patrol around its host reef: it glides right to the
+/// window edge, then back left, staying within the reef center ± the creature's
 /// radius. The window is clamped so the whole sprite fits, so the swimmer is
 /// always drawn fully — never partially clipped. The creature's `reef_bias` folds
 /// the lane into the lower half so smaller tenants keep near the reef.
-/// `ordinal` (this rock's k-th swimmer of its tier) sets a distinct lane and a
-/// distinct patrol phase, so two of a tier on one rock never share a cell.
+/// `ordinal` (this reef's k-th swimmer of its tier) sets a distinct lane and a
+/// distinct patrol phase, so two of a tier on one reef never share a cell.
 ///
 /// The swimmer's `Manner` rides on top of that one glide: a `pulse` picks which
 /// appearance the frame wears, an `under` row hangs a second row below the body,
@@ -584,7 +584,7 @@ fn patrol(
     area: Rect,
     buf: &mut Buffer,
     frame: u64,
-    rock: &Rock,
+    reef: &Reef,
     ordinal: u64,
     swimmer: &SwimmerDef,
     water: Color,
@@ -599,8 +599,8 @@ fn patrol(
     if max_anchor < min_anchor {
         return; // pane too narrow to show the fish fully
     }
-    // Patrol window: rock center ± radius, clamped so the glyph never clips.
-    let center = i64::from(slot_center_x(area, rock.slot));
+    // Patrol window: reef center ± radius, clamped so the glyph never clips.
+    let center = i64::from(slot_center_x(area, reef.slot));
     let left = (center - swimmer.radius).max(min_anchor);
     let right = (center + swimmer.radius).min(max_anchor);
     if right < left {
@@ -614,7 +614,7 @@ fn patrol(
         (left, look.right, true)
     } else {
         let period = (2 * travel) as u64;
-        // Phase offset per fish keeps same-rock fish out of lockstep, so even
+        // Phase offset per fish keeps same-reef fish out of lockstep, so even
         // two sharing a lane never coincide every frame.
         let t = ((frame / swimmer.slowdown + ordinal) % period) as i64;
         if t < travel {
@@ -646,7 +646,7 @@ fn patrol(
     // second row over the one above.
     let lanes = ((hi - lo + 1) / i64::from(rows)).max(1);
 
-    // Lane by ordinal: distinct rows for same-rock, same-size fish so their
+    // Lane by ordinal: distinct rows for same-reef, same-size fish so their
     // glyphs never share a cell. Small fish fold into the lower lanes (near the
     // reef); big fish range over the whole band.
     let lane = if swimmer.reef_bias {
@@ -776,8 +776,8 @@ fn draw_whale(app: &App, area: Rect, buf: &mut Buffer, frame: u64, water: Color)
 /// lives here, since absolute coordinates are the renderer's. The default 800‰
 /// reproduces the old fixed 0.8-width column. While the player is moving it
 /// (`app.anchor_mode`) the whole glyph is relit in the grabbed tone, the same
-/// "picked up, shape kept" cue game.rs uses for a grabbed rock. The anchor draws
-/// before the rocks, so a reef sharing its column overdraws it and it reads as
+/// "picked up, shape kept" cue game.rs uses for a grabbed reef. The anchor draws
+/// before the reefs, so a reef sharing its column overdraws it and it reads as
 /// sitting behind that reef — moving it aside is exactly what the mode is for.
 /// It hosts no events. Bottom-anchored to the floor, four rows tall.
 fn draw_anchor(app: &App, area: Rect, buf: &mut Buffer, water: Color) {
@@ -833,12 +833,12 @@ fn put(buf: &mut Buffer, area: Rect, x: i64, y: u16, sym: &str, style: Style) {
     }
 }
 
-/// Column for the `k`-th member of a rock's colony. Candidate columns fan out
-/// from the rock (nearest first, right then left: +2, -2, +3, -3, …), and only
+/// Column for the `k`-th member of a reef's colony. Candidate columns fan out
+/// from the reef (nearest first, right then left: +2, -2, +3, -3, …), and only
 /// those on-screen and clear of the rock body (center ±1) are kept; the k-th
 /// kept column is the answer. Skipping off-pane candidates for in-pane ones is
 /// what lets N members show as N columns even in a thin edge pane. Injective in
-/// `k` within a rock. `None` when the pane has fewer than `k+1` usable columns.
+/// `k` within a reef. `None` when the pane has fewer than `k+1` usable columns.
 fn colony_column(area: Rect, center: i64, k: u64) -> Option<i64> {
     let lo = i64::from(area.left());
     let hi = i64::from(area.right()); // exclusive
@@ -872,7 +872,7 @@ mod tests {
     use crate::content::creatures::{Drift, Look, Manner, Pulse};
 
     /// A pane to patrol one swimmer in, and the reef it patrols around.
-    fn pane(width: u16, height: u16) -> (Rect, Rock) {
+    fn pane(width: u16, height: u16) -> (Rect, Reef) {
         (
             Rect {
                 x: 0,
@@ -880,7 +880,7 @@ mod tests {
                 width,
                 height,
             },
-            Rock { kind: 0, slot: 4 },
+            Reef { kind: 0, slot: 4 },
         )
     }
 
@@ -888,9 +888,9 @@ mod tests {
     /// every cell painted in the swimmer's own color, which on an empty buffer
     /// is the swimmer and nothing else.
     fn sprite_rows(swimmer: &SwimmerDef, area: Rect, frame: u64) -> Vec<(u16, String)> {
-        let (_, rock) = pane(area.width, area.height);
+        let (_, reef) = pane(area.width, area.height);
         let mut buf = Buffer::empty(area);
-        patrol(area, &mut buf, frame, &rock, 0, swimmer, Color::Indexed(17));
+        patrol(area, &mut buf, frame, &reef, 0, swimmer, Color::Indexed(17));
         let mut rows: Vec<(u16, String)> = Vec::new();
         for y in area.top()..area.bottom() {
             let mut glyphs = String::new();
@@ -1125,7 +1125,7 @@ mod tests {
             .map(|&(_, b)| b)
             .max()
             .expect("a budget schedule");
-        let species = p.rock_kinds[0].capacity.len();
+        let species = p.reef_kinds[0].capacity.len();
 
         // Depth-first over multisets of kinds (a non-decreasing start index counts
         // each composition once), bounded by remaining budget and slots; track the
@@ -1137,8 +1137,8 @@ mod tests {
             if slots == 0 {
                 return;
             }
-            for kind in start..p.rock_kinds.len() {
-                let rk = &p.rock_kinds[kind];
+            for kind in start..p.reef_kinds.len() {
+                let rk = &p.reef_kinds[kind];
                 if rk.cost <= budget {
                     let next: Vec<u32> = caps
                         .iter()

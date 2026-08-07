@@ -47,7 +47,7 @@ pub enum Field {
     Score,
     Currency,
     Collectable,
-    Rocks,
+    Reefs,
     Started,
 }
 
@@ -264,7 +264,7 @@ fn parse_expectation<'a>(
         Some("score") => Field::Score,
         Some("currency") => Field::Currency,
         Some("collectable") => Field::Collectable,
-        Some("rocks") => Field::Rocks,
+        Some("reefs") => Field::Reefs,
         Some("started") => Field::Started,
         Some(other) => return Err(format!("expect: unknown field: {other}")),
         None => return Err("expect needs a field".to_string()),
@@ -381,7 +381,7 @@ fn read_field(app: &App, field: Field) -> u128 {
         Field::Score => app.state.score,
         Field::Currency => app.state.currency,
         Field::Collectable => app.state.collectable,
-        Field::Rocks => app.state.rocks.len() as u128,
+        Field::Reefs => app.state.reefs.len() as u128,
         Field::Started => u128::from(app.state.started),
     }
 }
@@ -567,11 +567,11 @@ mod tests {
 
     #[test]
     fn a_comment_is_stripped_from_an_expectations_source() {
-        let scenario = parsed("resize 80x20\nexpect rocks == 2  # both reefs landed\n");
+        let scenario = parsed("resize 80x20\nexpect reefs == 2  # both reefs landed\n");
         let Step::Expect(expectation) = &scenario.steps[1] else {
             panic!("expected an expectation");
         };
-        assert_eq!(expectation.source, "expect rocks == 2");
+        assert_eq!(expectation.source, "expect reefs == 2");
     }
 
     #[test]
@@ -674,7 +674,7 @@ mod tests {
             "expect score == 0\n",
             "expect currency >= 1\n",
             "expect collectable <= 2\n",
-            "expect rocks == 3\n",
+            "expect reefs == 3\n",
             "expect started true\n",
             "expect started false\n",
         ));
@@ -693,7 +693,7 @@ mod tests {
                 (Field::Score, Op::Eq, 0),
                 (Field::Currency, Op::AtLeast, 1),
                 (Field::Collectable, Op::AtMost, 2),
-                (Field::Rocks, Op::Eq, 3),
+                (Field::Reefs, Op::Eq, 3),
                 // `started` is read as 0/1, so one comparison rule fits every
                 // field; its own token stays true/false.
                 (Field::Started, Op::Eq, 1),
@@ -725,7 +725,7 @@ mod tests {
     fn keys_reach_the_app_through_the_real_input_path() {
         let outcome = run(&parsed("resize 100x30\nkey enter\nkey s\n"));
         assert!(outcome.app.state.run_started(), "enter placed, s started");
-        assert_eq!(outcome.app.state.rocks.len(), 1);
+        assert_eq!(outcome.app.state.reefs.len(), 1);
     }
 
     #[test]
@@ -781,11 +781,11 @@ mod tests {
         let outcome = run(&parsed(concat!(
             "resize 100x30\n",
             "expect started false\n",
-            "expect rocks == 0\n",
+            "expect reefs == 0\n",
             "key enter\n",
             "key s\n",
             "expect started true\n",
-            "expect rocks == 1\n",
+            "expect reefs == 1\n",
             "expect currency >= 1\n",
             "expect collectable == 0\n",
         )));
@@ -800,16 +800,16 @@ mod tests {
         // fatal, and every later step still happens.
         let outcome = run(&parsed(concat!(
             "resize 100x30\n",
-            "expect rocks == 1\n",
+            "expect reefs == 1\n",
             "capture after-the-failure\n",
             "expect started false\n",
         )));
         assert!(!outcome.all_passed());
         assert_eq!(outcome.checks.len(), 2);
         assert!(!outcome.checks[0].passed);
-        assert_eq!(outcome.checks[0].actual, 0, "no rock was ever placed");
+        assert_eq!(outcome.checks[0].actual, 0, "no reef was ever placed");
         assert_eq!(outcome.checks[0].expectation.line, 2);
-        assert_eq!(outcome.checks[0].expectation.source, "expect rocks == 1");
+        assert_eq!(outcome.checks[0].expectation.source, "expect reefs == 1");
         assert!(
             outcome.checks[1].passed,
             "the run carried on past the failure"

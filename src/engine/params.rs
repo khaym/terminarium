@@ -8,7 +8,7 @@ pub const MICRO: u128 = 1_000_000;
 /// Number of species in the trophic chain.
 pub const SPECIES: usize = 4;
 
-/// Discrete floor positions a rock can occupy in a run. Placement uses a slot
+/// Discrete floor positions a reef can occupy in a run. Placement uses a slot
 /// index in `0..SLOTS`; the renderer maps it to a pane column. Nine positions
 /// give the placement phase real composition room while the odd count keeps a
 /// true center slot (and the cursor's `SLOTS / 2` start) on the midline.
@@ -42,11 +42,11 @@ impl Ratio {
     }
 }
 
-/// A rock kind: its name, what it costs to place (budget, not currency), the
+/// A reef kind: its name, what it costs to place (budget, not currency), the
 /// score that unlocks it, the detritus it sheds per tick, and how many of each
 /// species it can house.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct RockKind {
+pub struct ReefKind {
     /// Display name (also the identity in the placement UI).
     pub name: &'static str,
     /// Placement budget this kind consumes (an allocation, never currency).
@@ -79,22 +79,22 @@ pub struct Params {
     pub base_cost: [u128; SPECIES],
     /// Cost multiplier per owned unit.
     pub cost_growth: Ratio,
-    /// Rock kinds available to place. A rock stores its kind as an index into
+    /// Reef kinds available to place. A reef stores its kind as an index into
     /// this list, so the order is the save format (see `content::KINDS`) and
     /// append-only — which also means it is not necessarily ascending in unlock
     /// score, since a kind added later may unlock earlier than one already
     /// shipped. Whether a kind is placeable is read from its own `unlock`, never
     /// from its position.
-    pub rock_kinds: Vec<RockKind>,
+    pub reef_kinds: Vec<ReefKind>,
     /// Placement budget schedule: `(score threshold, budget)` pairs in
     /// ascending threshold order. The budget available at a score is the one
     /// from the highest threshold at or below it (see `Params::budget`). Budget
     /// is an allocation, spent every run start up to the unlocked ceiling.
     pub budget_steps: Vec<(u128, u32)>,
     /// Currency granted once, at run start (`start_run`), so the first algae is
-    /// reachable within a single peek rather than ~48s of rock output.
+    /// reachable within a single peek rather than ~48s of reef output.
     /// Deliberately short of the first algae's cost — the player still watches
-    /// the rock→sediment→collect→buy causal chain close over a few seconds.
+    /// the reef→sediment→collect→buy causal chain close over a few seconds.
     pub seed_currency: u128,
     /// Living-population biomass (the species pools, via `State::living_biomass`)
     /// at or above which a visiting whale may cross the pane. The whale is pure
@@ -138,7 +138,7 @@ impl Default for Params {
             // The kinds and their order come from the content manifest, where
             // each kind's economy row sits beside its look — so adding a kind
             // never edits this file.
-            rock_kinds: crate::content::rock_kinds(),
+            reef_kinds: crate::content::reef_kinds(),
             budget_steps: vec![
                 (0, 1),
                 (12_000 * MICRO, 2),

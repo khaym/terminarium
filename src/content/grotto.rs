@@ -5,14 +5,14 @@
 use ratatui::style::Color;
 
 use super::{creatures, ReefDef, RockVariant};
-use crate::engine::{RockKind, MICRO};
+use crate::engine::{ReefKind, MICRO};
 
 /// Grotto stone — the base rock's gray, shared deliberately: this reef reads by
 /// its base layer, not its body (work/render-observations.md).
 const GROTTO_STONE: Color = Color::Indexed(245);
 
 pub const DEF: ReefDef = ReefDef {
-    economy: RockKind {
+    economy: ReefKind {
         name: "grotto",
         cost: 3,
         unlock: 40_000 * MICRO,

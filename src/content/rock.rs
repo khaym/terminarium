@@ -4,13 +4,13 @@
 use ratatui::style::Color;
 
 use super::{creatures, ReefDef, RockVariant};
-use crate::engine::{RockKind, MICRO};
+use crate::engine::{ReefKind, MICRO};
 
 /// Rock body — a neutral reef gray in the indexed ramp.
 const ROCK: Color = Color::Indexed(245);
 
 pub const DEF: ReefDef = ReefDef {
-    economy: RockKind {
+    economy: ReefKind {
         name: "rock",
         cost: 1,
         unlock: 0,

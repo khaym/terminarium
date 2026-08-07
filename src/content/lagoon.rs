@@ -6,13 +6,13 @@
 use ratatui::style::Color;
 
 use super::{creatures, ReefDef, RockVariant};
-use crate::engine::{RockKind, MICRO};
+use crate::engine::{ReefKind, MICRO};
 
 /// Lagoon sand — a bright shoal color, the lightest rock body of any reef.
 const LAGOON_SAND: Color = Color::Indexed(187);
 
 pub const DEF: ReefDef = ReefDef {
-    economy: RockKind {
+    economy: ReefKind {
         name: "lagoon",
         cost: 2,
         unlock: 60_000 * MICRO,

@@ -18,7 +18,7 @@ resize 100x30              # the playable size: the HUD and every key live here
 key enter                  # the founding rock on the mid-floor slot
 key s
 expect started true
-expect rocks == 1
+expect reefs == 1
 
 # --- straight to lantern's own unlock, riding the founding rock alone -----
 # No purchases: a placed reef sheds from the moment it is placed, so the flat
@@ -44,7 +44,7 @@ key right                  # slot 8: the pane's right edge
 key enter                  # a second lantern reef there
 key s
 expect started true
-expect rocks == 2
+expect reefs == 2
 
 # Fill both reefs' combined housing (2 x [4, 3, 2, 1] = [8, 6, 4, 2] — 20
 # individuals).
@@ -154,7 +154,7 @@ key right
 key enter                  # slot 8
 key s
 expect started true
-expect rocks == 5
+expect reefs == 5
 
 # Fill every lantern's combined housing (5 x [4, 3, 2, 1] = [20, 15, 10, 5] —
 # the sprite-cap ceiling this budget-5 composition sits at exactly).

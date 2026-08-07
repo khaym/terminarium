@@ -1,6 +1,6 @@
 //! Game layer: the same tank plus a HUD. Numbers live here and only here —
 //! the wallpaper never shows them. Before the run starts this layer is the
-//! placement screen instead: an empty tank the player seeds with one rock.
+//! placement screen instead: an empty tank the player seeds with one reef.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -34,7 +34,7 @@ const HINT: Color = Color::Indexed(245);
 const PREVIEW: Color = Color::Indexed(178);
 /// Placement slot markers: fainter still than the preview.
 const MARKER: Color = Color::Indexed(236);
-/// A placed rock under the placement cursor: relit warm so it reads as grabbed
+/// A placed reef under the placement cursor: relit warm so it reads as grabbed
 /// (what backspace would lift), its shape still telling its kind.
 const GRABBED: Color = Color::Indexed(222);
 
@@ -48,7 +48,7 @@ pub fn render(app: &App, area: Rect, buf: &mut Buffer) {
         wallpaper::render(app, area, buf);
         return;
     }
-    // Before the first rock the game layer is the placement screen.
+    // Before the first reef the game layer is the placement screen.
     if !app.state.run_started() {
         render_placement(app, area, buf);
         return;
@@ -173,9 +173,9 @@ fn score_line(app: &App) -> (String, bool) {
     let score = app.state.score;
     let spent: u32 = app
         .state
-        .rocks
+        .reefs
         .iter()
-        .map(|r| app.params.rock_kinds[r.kind].cost)
+        .map(|r| app.params.reef_kinds[r.kind].cost)
         .sum();
     let budget = app.params.budget(score);
     if budget > spent {
@@ -191,7 +191,7 @@ fn score_line(app: &App) -> (String, bool) {
             .unwrap_or(0);
         let fresh = app
             .params
-            .rock_kinds
+            .reef_kinds
             .iter()
             .rfind(|k| k.unlock == wall)
             .map(|k| k.name);
@@ -209,7 +209,7 @@ fn score_line(app: &App) -> (String, bool) {
     }
     let next = app
         .params
-        .rock_kinds
+        .reef_kinds
         .iter()
         .map(|k| k.unlock)
         .filter(|&u| u > score)
@@ -252,7 +252,7 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
     // Unlocked kinds with their budget cost; the selected one is highlighted so
     // "which will I drop?" reads at a glance.
     let mut x = left;
-    for (kind, rk) in app.params.rock_kinds.iter().enumerate() {
+    for (kind, rk) in app.params.reef_kinds.iter().enumerate() {
         if app.state.score < rk.unlock || x >= right_edge {
             continue;
         }
@@ -276,9 +276,9 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
     // left to place.
     let used: u32 = app
         .state
-        .rocks
+        .reefs
         .iter()
-        .map(|r| app.params.rock_kinds[r.kind].cost)
+        .map(|r| app.params.reef_kinds[r.kind].cost)
         .sum();
     let total = app.params.budget(app.state.score);
     buf.set_stringn(
@@ -292,7 +292,7 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
     // The next reef still to unlock — a target for this run's score.
     if let Some(rk) = app
         .params
-        .rock_kinds
+        .reef_kinds
         .iter()
         .find(|k| app.state.score < k.unlock)
     {
@@ -313,7 +313,7 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
     // marker drawn over it would punch a hole through the body.
     let floor_y = tank.bottom() - 1;
     for slot in 0..SLOTS {
-        if app.state.rocks.iter().any(|r| r.slot == slot) {
+        if app.state.reefs.iter().any(|r| r.slot == slot) {
             continue;
         }
         wallpaper::draw_slot_marker(
@@ -327,16 +327,16 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
     }
 
     // The cursor shows what acting here affects: on a free slot, a dim ghost of
-    // the kind enter would drop; on an occupied slot, the rock backspace would
+    // the kind enter would drop; on an occupied slot, the reef backspace would
     // lift, relit in the grab tone (its shape keeps telling its kind).
     let cursor_x = wallpaper::slot_center_x(tank, app.placement_cursor);
     match app
         .state
-        .rocks
+        .reefs
         .iter()
         .find(|r| r.slot == app.placement_cursor)
     {
-        Some(rock) => wallpaper::draw_rock(tank, buf, cursor_x, floor_y, rock.kind, GRABBED, water),
+        Some(reef) => wallpaper::draw_rock(tank, buf, cursor_x, floor_y, reef.kind, GRABBED, water),
         None => wallpaper::draw_rock(
             tank,
             buf,

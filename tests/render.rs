@@ -8,21 +8,21 @@ use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use terminarium::app::{App, Phase};
 use terminarium::engine::{
-    Params, Rock, RockKind, State, DEFAULT_ANCHOR_POS, MICRO, SLOTS, SPECIES,
+    Params, Reef, ReefKind, State, DEFAULT_ANCHOR_POS, MICRO, SLOTS, SPECIES,
 };
 use terminarium::ui;
 
-/// The index a kind's name resolves to in `Params::default().rock_kinds` — the
-/// manifest order that also doubles as `Rock::kind`. New or changed test states
+/// The index a kind's name resolves to in `Params::default().reef_kinds` — the
+/// manifest order that also doubles as `Reef::kind`. New or changed test states
 /// that name a kind by index look it up here rather than hard-coding the
 /// literal, so appending a kind to the manifest cannot silently misnumber an
 /// unrelated test.
 fn kind_index(name: &str) -> usize {
     Params::default()
-        .rock_kinds
+        .reef_kinds
         .iter()
         .position(|k| k.name == name)
-        .unwrap_or_else(|| panic!("no such rock kind: {name}"))
+        .unwrap_or_else(|| panic!("no such reef kind: {name}"))
 }
 
 fn fixed_state() -> State {
@@ -33,10 +33,10 @@ fn fixed_state() -> State {
         collectable: 210 * MICRO,
         currency: 420 * MICRO,
         score: 0,
-        // A run in progress: started, with one base rock near mid-floor and a
-        // clock past zero. The reef anchors the scene (rock, gathered life,
-        // sediment mound under it).
-        rocks: vec![Rock { kind: 0, slot: 2 }],
+        // A run in progress: started, with one base-rock reef near mid-floor
+        // and a clock past zero. The reef anchors the scene (rock body,
+        // gathered life, sediment mound under it).
+        reefs: vec![Reef { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -85,8 +85,8 @@ fn screen_with_params(state: State, params: Params, width: u16, height: u16) -> 
 /// A kind for a manifest a test builds itself. Only the name, the cost and the
 /// unlock reach the text under test; output and housing are zeroed, since no
 /// rule read here looks at them.
-fn synthetic_kind(name: &'static str, cost: u32, unlock: u128) -> RockKind {
-    RockKind {
+fn synthetic_kind(name: &'static str, cost: u32, unlock: u128) -> ReefKind {
+    ReefKind {
         name,
         cost,
         unlock,
@@ -100,9 +100,9 @@ fn synthetic_kind(name: &'static str, cost: u32, unlock: u128) -> RockKind {
 /// not reef names, so a reading of one of these tests can never be mistaken for
 /// a statement about shipped content — that lives in the progression registry
 /// (`src/content/mod.rs`).
-fn synthetic_params(rock_kinds: Vec<RockKind>, budget_steps: Vec<(u128, u32)>) -> Params {
+fn synthetic_params(reef_kinds: Vec<ReefKind>, budget_steps: Vec<(u128, u32)>) -> Params {
     Params {
-        rock_kinds,
+        reef_kinds,
         budget_steps,
         ..Params::default()
     }
@@ -265,17 +265,17 @@ fn palette_stays_in_indexed_256_space() {
         |c: Option<Color>| matches!(c, None | Some(Color::Reset) | Some(Color::Indexed(_)));
 
     // A swatch of the whole reef palette rather than a reachable placement: one
-    // rock of *every* kind in the manifest, side by side, brings in every reef
+    // reef of *every* kind in the manifest, side by side, brings in every reef
     // color at once — each rock body, each base-algae tint, and every tenant any
-    // kind houses. Built from `rock_kinds` rather than a hand-written list, so a
+    // kind houses. Built from `reef_kinds` rather than a hand-written list, so a
     // newly added kind is swatched the moment it joins the manifest.
     //
-    // Individuals are dealt round-robin by `i % rocks.len()`, so population must
-    // be the kind count at every tier for each tier to reach the last rock in
+    // Individuals are dealt round-robin by `i % reefs.len()`, so population must
+    // be the kind count at every tier for each tier to reach the last reef in
     // the list. (Limit: past `MAX_BIG_FISH` = 7 kinds the apex tier is capped
     // before the round-robin reaches the trailing kinds, and their apex colors
     // stop being swatched here — the caps would need raising with it.)
-    let kinds = Params::default().rock_kinds;
+    let kinds = Params::default().reef_kinds;
     let reefs = State {
         population: [kinds.len() as u32; 4],
         pool: [0; 4],
@@ -284,8 +284,8 @@ fn palette_stays_in_indexed_256_space() {
         currency: 0,
         // Clears the last unlock, so every kind is legitimately on screen.
         score: kinds.iter().map(|k| k.unlock).max().expect("a kind"),
-        rocks: (0..kinds.len())
-            .map(|i| Rock {
+        reefs: (0..kinds.len())
+            .map(|i| Reef {
                 kind: i,
                 slot: i as u8,
             })
@@ -339,7 +339,7 @@ fn buy_highlight_needs_money_and_housing() {
         collectable: 0,
         currency: 200 * MICRO,
         score: 0,
-        rocks: vec![Rock { kind: 0, slot: 2 }],
+        reefs: vec![Reef { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -446,18 +446,18 @@ fn placement_marks_all_nine_slots() {
 }
 
 /// Nine slots must still fit the minimum game pane (80x20) without the reefs
-/// crowding. With a rock on every slot (and one algae frond each), every 3-wide
+/// crowding. With a reef on every slot (and one algae frond each), every 3-wide
 /// body lands on its own three columns — nine whole bodies are 27 floor cells —
 /// and every frond fans into a gap between bodies, nine fronds in nine distinct
-/// columns. Algae draw after rocks, so a frond straying onto a neighbour's body
+/// columns. Algae draw after reefs, so a frond straying onto a neighbour's body
 /// would overwrite it and drop the 27 below; that it holds proves non-overlap.
 #[test]
 fn nine_reefs_fit_the_min_pane_without_overlap() {
     use ratatui::style::Color;
     use std::collections::HashSet;
 
-    // One algae per rock: population equals the slot count, shared round-robin
-    // across the rocks, so each reef shows a single frond in its nearest flank.
+    // One algae per reef: population equals the slot count, shared round-robin
+    // across the reefs, so each reef shows a single frond in its nearest flank.
     let state = State {
         population: [u32::from(SLOTS), 0, 0, 0],
         pool: [0; 4],
@@ -465,7 +465,7 @@ fn nine_reefs_fit_the_min_pane_without_overlap() {
         collectable: 0,
         currency: 0,
         score: 0,
-        rocks: (0..SLOTS).map(|slot| Rock { kind: 0, slot }).collect(),
+        reefs: (0..SLOTS).map(|slot| Reef { kind: 0, slot }).collect(),
         tick_count: 30,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -497,7 +497,7 @@ fn nine_reefs_fit_the_min_pane_without_overlap() {
     );
 }
 
-/// Feedback (a): a bought individual must show in the picture. With one rock
+/// Feedback (a): a bought individual must show in the picture. With one reef
 /// and four algae the renderer draws exactly four frond columns — population
 /// equals the visible count (within the sprite cap). The old side±{2,3,4}
 /// scheme collided, so four algae could render as only two fronds.
@@ -513,7 +513,7 @@ fn algae_population_shows_one_column_each() {
         collectable: 0,
         currency: 0,
         score: 0,
-        rocks: vec![Rock { kind: 0, slot: 2 }],
+        reefs: vec![Reef { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -536,7 +536,7 @@ fn algae_population_shows_one_column_each() {
 
 /// The tank's home is a thin always-on side pane, so a bought individual must
 /// show even there — including at an edge slot, where a naive fan runs some of
-/// its columns off-pane. Across widths 20 and 30 with the rock at slot 0 and at
+/// its columns off-pane. Across widths 20 and 30 with the reef at slot 0 and at
 /// the last slot, four algae still render as four frond columns: off-pane
 /// candidate columns are skipped in favour of in-pane ones.
 #[test]
@@ -553,7 +553,7 @@ fn algae_visible_at_edge_slots_in_narrow_panes() {
                 collectable: 0,
                 currency: 0,
                 score: 0,
-                rocks: vec![Rock { kind: 0, slot }],
+                reefs: vec![Reef { kind: 0, slot }],
                 tick_count: 30,
                 started: true,
                 anchor_pos: DEFAULT_ANCHOR_POS,
@@ -587,7 +587,7 @@ fn plankton_occupy_distinct_cells() {
     use ratatui::style::Color;
     use std::collections::HashSet;
 
-    // Eight plankton on one rock. Rendering maps population -> sprites directly
+    // Eight plankton on one reef. Rendering maps population -> sprites directly
     // (housing is the engine's concern), so this drives that map above what one
     // base rock would house, to exercise its distinctness.
     let state = State {
@@ -597,7 +597,7 @@ fn plankton_occupy_distinct_cells() {
         collectable: 0,
         currency: 0,
         score: 0,
-        rocks: vec![Rock { kind: 0, slot: 2 }],
+        reefs: vec![Reef { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -635,7 +635,7 @@ fn fish_keep_distinct_lanes() {
         collectable: 0,
         currency: 0,
         score: 0,
-        rocks: vec![Rock { kind: 0, slot: 2 }],
+        reefs: vec![Reef { kind: 0, slot: 2 }],
         tick_count: 30,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -667,11 +667,11 @@ fn fish_keep_distinct_lanes() {
 }
 
 /// Feedback (b): the reef's placement must move the life. A fish patrols a
-/// bounded window around its rock — its anchor x stays within the rock center ±
-/// the species radius for every frame, and moving the rock (slot 0 vs slot 4)
+/// bounded window around its reef — its anchor x stays within the reef center ±
+/// the species radius for every frame, and moving the reef (slot 0 vs slot 4)
 /// moves the fish with it.
 #[test]
-fn fish_patrol_follows_its_rock() {
+fn fish_patrol_follows_its_reef() {
     use ratatui::style::Color;
 
     // Small-fish patrol radius, mirroring src/ui/wallpaper.rs SMALL_RADIUS.
@@ -690,7 +690,7 @@ fn fish_patrol_follows_its_rock() {
             collectable: 0,
             currency: 0,
             score: 0,
-            rocks: vec![Rock { kind: 0, slot }],
+            reefs: vec![Reef { kind: 0, slot }],
             tick_count: 30,
             started: true,
             anchor_pos: DEFAULT_ANCHOR_POS,
@@ -721,7 +721,7 @@ fn fish_patrol_follows_its_rock() {
         );
         assert_ne!(
             x0, x4,
-            "the fish follows its rock: slot 0 and slot 4 differ at frame {frame}"
+            "the fish follows its reef: slot 0 and slot 4 differ at frame {frame}"
         );
     }
 }
@@ -729,7 +729,7 @@ fn fish_patrol_follows_its_rock() {
 /// Feedback (a) at the budget-5 wall: a five-rock sea filled to housing shows
 /// every bought individual. rock×5 tops out at algae 20, plankton 15, small fish
 /// 10, big fish 5 — and the renderer draws each in full. The pre-#16 sprite caps
-/// (12/14/8/4) clipped all four; without the raise this test goes red. Rocks sit
+/// (12/14/8/4) clipped all four; without the raise this test goes red. Reefs sit
 /// on spread slots (0,2,4,6,8) so their colonies do not cross, and static
 /// sprites are counted by column while gliding fish are counted by their glyph
 /// cells at the least-occluded frame of a sweep.
@@ -745,8 +745,8 @@ fn rock_five_sea_draws_the_full_population() {
         collectable: 0,
         currency: 0,
         score: 0, // below the anchor unlock, so no landmark tints the count
-        rocks: (0..5u8)
-            .map(|k| Rock {
+        reefs: (0..5u8)
+            .map(|k| Reef {
                 kind: 0,
                 slot: k * 2,
             })
@@ -808,7 +808,7 @@ fn rock_five_sea_draws_the_full_population() {
     );
 }
 
-/// Before a rock is placed the wallpaper is an empty sea: waves only, no reef,
+/// Before a reef is placed the wallpaper is an empty sea: waves only, no reef,
 /// no life, no text — the wallpaper grammar is unchanged by the new run gate.
 #[test]
 fn pre_run_wallpaper_is_an_empty_sea() {
@@ -920,7 +920,7 @@ fn placement_panel_reads_budget_and_names_the_first_locked_kind() {
     // list, and umber — still locked — stays the goal.
     let mut state = State::new();
     state.score = 20_000 * MICRO;
-    state.rocks = vec![Rock { kind: 2, slot: 0 }];
+    state.reefs = vec![Reef { kind: 2, slot: 0 }];
     let screen = screen_with_params(state, params(), 100, 30);
     assert!(
         screen.contains("budget 2/5"),
@@ -963,7 +963,7 @@ fn hud_shows_score_and_next_reef() {
         let mut state = fixed_state();
         state.score = score;
         state.collectable = 0;
-        state.rocks = vec![Rock { kind: 0, slot: 2 }]; // amber: spends the budget
+        state.reefs = vec![Reef { kind: 0, slot: 2 }]; // amber: spends the budget
         state
     };
 
@@ -1060,17 +1060,17 @@ fn headroom_nudge_reads_as_budget_at_a_kindless_wall() {
             vec![(0, 1), (20_000 * MICRO, 2), (50_000 * MICRO, 4)],
         )
     };
-    let sea = |rocks: Vec<Rock>| {
+    let sea = |reefs: Vec<Reef>| {
         let mut state = fixed_state();
         state.score = 50_000 * MICRO; // past the kind-less wall: budget 4
         state.collectable = 0;
-        state.rocks = rocks;
+        state.reefs = reefs;
         state
     };
 
     // One cobalt (spends 2 of 4). Long-unlocked cobalt must not be read as the
     // reward of a wall it did not come from: budget vocabulary cannot go stale.
-    let screen = screen_with_params(sea(vec![Rock { kind: 1, slot: 2 }]), params(), 100, 30);
+    let screen = screen_with_params(sea(vec![Reef { kind: 1, slot: 2 }]), params(), 100, 30);
     assert!(
         screen.contains("budget 2/4 - [n] new sea"),
         "the nudge reports unspent budget: {screen}"
@@ -1083,7 +1083,7 @@ fn headroom_nudge_reads_as_budget_at_a_kindless_wall() {
     // cobalt + amber spends 3 of 4 — the kind-less wall's headroom is still
     // announced, in budget terms (the regression guard for a silent step).
     let screen = screen_with_params(
-        sea(vec![Rock { kind: 1, slot: 2 }, Rock { kind: 0, slot: 4 }]),
+        sea(vec![Reef { kind: 1, slot: 2 }, Reef { kind: 0, slot: 4 }]),
         params(),
         100,
         30,
@@ -1095,7 +1095,7 @@ fn headroom_nudge_reads_as_budget_at_a_kindless_wall() {
 
     // Two cobalt spends the full 4 — no headroom, so no nudge line.
     let screen = screen_with_params(
-        sea(vec![Rock { kind: 1, slot: 2 }, Rock { kind: 1, slot: 4 }]),
+        sea(vec![Reef { kind: 1, slot: 2 }, Reef { kind: 1, slot: 4 }]),
         params(),
         100,
         30,
@@ -1125,7 +1125,7 @@ fn headroom_nudge_names_the_latest_crossed_wall() {
     );
     let mut state = fixed_state();
     state.score = 20_000 * MICRO; // the wall just crossed; budget 4
-    state.rocks = vec![Rock { kind: 1, slot: 2 }]; // cobalt, spends 2 of 4
+    state.reefs = vec![Reef { kind: 1, slot: 2 }]; // cobalt, spends 2 of 4
     state.collectable = 0;
     let screen = screen_with_params(state, params, 80, 20);
     assert!(
@@ -1269,12 +1269,12 @@ fn anchor_move_mode_replaces_the_hint_row() {
 /// calm-gold preview tone — the ghost's shape carries the kind, since its color
 /// does not.
 #[test]
-fn placement_ghost_and_placed_rock_take_the_kind() {
+fn placement_ghost_and_placed_reef_take_the_kind() {
     use ratatui::style::Color;
 
     let mut state = State::new();
     state.score = 12_000 * MICRO; // coral unlocked, budget 2
-    state.rocks = vec![Rock { kind: 1, slot: 0 }];
+    state.reefs = vec![Reef { kind: 1, slot: 0 }];
     let mut app = App::new(state, Params::default());
     app.placement_kind = 1; // coral selected
     app.placement_cursor = 4; // ghost on an empty slot
@@ -1337,18 +1337,18 @@ fn placement_ghost_stands_out_on_every_phase_water() {
 }
 
 /// Placed reefs must stay whole on the placement screen: the free-slot markers
-/// may not punch through a placed body, and a cursor over a placed rock grabs
+/// may not punch through a placed body, and a cursor over a placed reef grabs
 /// it (relit in the cursor tone, keeping its own shape) instead of painting the
 /// selected kind's ghost over it.
 #[test]
 fn placed_reefs_stay_whole_during_placement() {
     use ratatui::style::Color;
 
-    // A rock placed at slot 0 (center column 5, floor row 28 at 100x30) with
+    // A reef placed at slot 0 (center column 5, floor row 28 at 100x30) with
     // the cursor elsewhere: the body keeps its center cell.
     let mut state = State::new();
-    state.score = 12_000 * MICRO; // budget 2: placement continues after one rock
-    state.rocks = vec![Rock { kind: 0, slot: 0 }];
+    state.score = 12_000 * MICRO; // budget 2: placement continues after one reef
+    state.reefs = vec![Reef { kind: 0, slot: 0 }];
     let terminal = rendered_terminal_with(state.clone(), 100, 30);
     let buffer = terminal.backend().buffer();
     let center = buffer.cell((5, 28)).expect("cell");
@@ -1363,7 +1363,7 @@ fn placed_reefs_stay_whole_during_placement() {
         "rock gray body"
     );
 
-    // Cursor on the occupied slot, with coral selected: the rock is grabbed —
+    // Cursor on the occupied slot, with coral selected: the reef is grabbed —
     // relit, its own shape — not repainted as a coral ghost.
     let mut app = App::new(state, Params::default());
     app.placement_cursor = 0;
@@ -1371,14 +1371,14 @@ fn placed_reefs_stay_whole_during_placement() {
     let terminal = rendered_terminal_of(app, 100, 30);
     let buffer = terminal.backend().buffer();
     let center = buffer.cell((5, 28)).expect("cell");
-    assert_eq!(center.symbol(), "█", "the grabbed rock keeps its shape");
+    assert_eq!(center.symbol(), "█", "the grabbed reef keeps its shape");
     assert_eq!(
         center.style().fg,
         Some(Color::Indexed(222)),
-        "the grabbed rock is relit in the cursor tone"
+        "the grabbed reef is relit in the cursor tone"
     );
     let side = buffer.cell((4, 28)).expect("cell");
-    assert_eq!(side.symbol(), "▄", "no coral ghost over the placed rock");
+    assert_eq!(side.symbol(), "▄", "no coral ghost over the placed reef");
 }
 
 /// A coral and a kelp reef side by side each render in their own colors — rock
@@ -1395,7 +1395,7 @@ fn reef_variants_render_distinct_colors() {
         collectable: 0,
         currency: 0,
         score: 30_000 * MICRO,
-        rocks: vec![Rock { kind: 1, slot: 1 }, Rock { kind: 2, slot: 3 }],
+        reefs: vec![Reef { kind: 1, slot: 1 }, Reef { kind: 2, slot: 3 }],
         tick_count: 300,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -1433,7 +1433,7 @@ fn grotto_sea_shows_coralline_fronds_shrimp_and_squid() {
         collectable: 0,
         currency: 0,
         score: 40_000 * MICRO,
-        rocks: vec![Rock { kind: 3, slot: 4 }],
+        reefs: vec![Reef { kind: 3, slot: 4 }],
         tick_count: 300,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -1506,7 +1506,7 @@ fn lantern_sea_shows_its_moss_and_plankton_colors() {
         collectable: 0,
         currency: 0,
         score: 100_000 * MICRO,
-        rocks: vec![Rock {
+        reefs: vec![Reef {
             kind: kind_index("lantern"),
             slot: 4,
         }],
@@ -1587,7 +1587,7 @@ fn anglerfish_lure_reads_apart_from_its_body_in_both_directions() {
         collectable: 0,
         currency: 0,
         score: 100_000 * MICRO,
-        rocks: vec![Rock {
+        reefs: vec![Reef {
             kind: kind_index("lantern"),
             slot: 4,
         }],
@@ -1673,7 +1673,7 @@ fn lagoon_sea_shows_seagrass_jellyfish_and_turtle() {
         collectable: 0,
         currency: 0,
         score: 60_000 * MICRO,
-        rocks: vec![Rock {
+        reefs: vec![Reef {
             kind: kind_index("lagoon"),
             slot: 4,
         }],
@@ -1754,7 +1754,7 @@ fn jellyfish_keeps_both_rows_inside_the_thin_pane() {
         collectable: 0,
         currency: 0,
         score: 60_000 * MICRO,
-        rocks: vec![Rock {
+        reefs: vec![Reef {
             kind: kind_index("lagoon"),
             slot: 4,
         }],
@@ -1824,7 +1824,7 @@ fn kelp_sea_shows_dugong() {
         collectable: 0,
         currency: 0,
         score: 30_000 * MICRO,
-        rocks: vec![Rock { kind: 2, slot: 2 }],
+        reefs: vec![Reef { kind: 2, slot: 2 }],
         tick_count: 300,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -1868,7 +1868,7 @@ fn dugong_fully_drawn_in_narrow_pane() {
         collectable: 0,
         currency: 0,
         score: 30_000 * MICRO,
-        rocks: vec![Rock {
+        reefs: vec![Reef {
             kind: 2,
             slot: SLOTS - 1,
         }], // edge slot: worst case for the clamp
@@ -1967,20 +1967,20 @@ fn time_of_day_recolors_the_water_and_surface() {
 }
 
 /// A state with high biomass but nothing else, so a rendered whale stands alone
-/// against the water. Rocks are empty, so every reef sprite (rock, algae,
+/// against the water. Reefs are empty, so every reef sprite (rock body, algae,
 /// plankton, detritus, fish, sediment) skips; the whale keys off biomass, not
 /// the reef, so it still crosses.
 fn whale_only_sea() -> State {
     State {
         population: [0, 0, 0, 0],
         // Living biomass in the pools alone clears the whale's gate (400 units,
-        // default); with no rocks every reef sprite skips, so the whale is alone.
+        // default); with no reefs every reef sprite skips, so the whale is alone.
         pool: [400 * MICRO, 0, 0, 0],
         nutrient: 0,
         collectable: 0,
         currency: 0,
         score: 0, // below the anchor unlock, so no anchor either
-        rocks: vec![],
+        reefs: vec![],
         tick_count: 0,
         started: true,
         anchor_pos: DEFAULT_ANCHOR_POS,
@@ -2172,7 +2172,7 @@ fn anchor_appears_only_after_its_score_unlock() {
     let anchor_cells = |score: u128| -> usize {
         let mut state = State::new();
         state.score = score;
-        state.started = true; // a live sea; the anchor is not a reef, so no rock needed
+        state.started = true; // a live sea; the anchor is not a reef, so no reef needed
         let (w, h) = (40u16, 12u16);
         let terminal = rendered_terminal_with(state, w, h);
         let buffer = terminal.backend().buffer();
@@ -2198,7 +2198,7 @@ fn anchor_appears_only_after_its_score_unlock() {
 /// The overlap rule holds at the default anchor position (800‰): that column
 /// lands on slot 7's reef. At the minimum game pane (80x20) the anchor spans
 /// columns 62..=66 and slot 7's body covers 65..=67, so the two right anchor
-/// cells share a floor column with that body; the anchor draws before the rocks,
+/// cells share a floor column with that body; the anchor draws before the reefs,
 /// so the reef overdraws it there (it reads as behind the reef). The other 14
 /// pixel-art cells still render. #15 lets the player move the anchor off a
 /// crowding reef, but the overlap rule itself is unchanged — a reef sharing the
@@ -2212,7 +2212,7 @@ fn anchor_overdrawn_by_the_slot_seven_reef_at_min_pane() {
     state.score = 75_000 * MICRO; // anchor unlocked
     state.started = true;
     // A reef on every slot — the crowded worst case for the fixed anchor.
-    state.rocks = (0..SLOTS).map(|slot| Rock { kind: 0, slot }).collect();
+    state.reefs = (0..SLOTS).map(|slot| Reef { kind: 0, slot }).collect();
     let terminal = rendered_terminal_with(state, w, h);
     let buffer = terminal.backend().buffer();
 
@@ -2314,7 +2314,7 @@ fn anchor_follows_its_stored_position() {
 }
 
 /// While the player is moving it, the anchor is relit in the grabbed tone (222,
-/// the same game.rs uses for a grabbed rock): its own iron/highlight/rust
+/// the same game.rs uses for a grabbed reef): its own iron/highlight/rust
 /// palette yields entirely to the grabbed gold, its silhouette unchanged. Idle,
 /// it wears its own palette and shows no grabbed tone. Anchor-move mode is a
 /// game-layer modal (a wallpaper takes no input, so it can never be armed

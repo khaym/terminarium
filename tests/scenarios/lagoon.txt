@@ -18,7 +18,7 @@ resize 100x30              # the playable size: the HUD and every key live here
 key enter                  # the founding rock on the mid-floor slot
 key s
 expect started true
-expect rocks == 1
+expect reefs == 1
 
 # --- straight to the lagoon's unlock, riding the founding rock alone ------
 # No purchases: a placed reef sheds from the moment it is placed, so the flat
@@ -36,7 +36,7 @@ capture ghost              # the ghost's shape names the kind; its color cannot
 key enter                  # drop it on the mid-floor slot (default cursor 4)
 key s
 expect started true
-expect rocks == 1
+expect reefs == 1
 
 # Fill the lagoon's housing ([4, 4, 6, 2] — 16 individuals, ~18,500 currency).
 wait 3000000
@@ -132,7 +132,7 @@ key right                  # slot 8: the pane's right edge
 key down                   # the lagoon again
 key enter
 key s
-expect rocks == 1
+expect reefs == 1
 wait 3000000
 key 1
 key 1
@@ -194,7 +194,7 @@ key right
 key up                     # back around to the founding rock
 key enter
 key s
-expect rocks == 3
+expect reefs == 3
 wait 5000000
 key 1
 key 1

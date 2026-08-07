@@ -4,13 +4,13 @@
 use ratatui::style::Color;
 
 use super::{creatures, ReefDef, RockVariant};
-use crate::engine::{RockKind, MICRO};
+use crate::engine::{ReefKind, MICRO};
 
 /// Kelp holdfast — a muted olive anchoring the frond forest to the floor.
 const KELP_HOLDFAST: Color = Color::Indexed(58);
 
 pub const DEF: ReefDef = ReefDef {
-    economy: RockKind {
+    economy: ReefKind {
         name: "kelp",
         cost: 3,
         unlock: 30_000 * MICRO,

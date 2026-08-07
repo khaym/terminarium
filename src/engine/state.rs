@@ -3,10 +3,10 @@
 
 use super::params::{Params, Species, SLOTS, SPECIES};
 
-/// A placed rock: which kind (index into `Params::rock_kinds`) and which floor
+/// A placed reef: which kind (index into `Params::reef_kinds`) and which floor
 /// slot it occupies. Absolute coordinates live in the renderer, not here.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Rock {
+pub struct Reef {
     pub kind: usize,
     pub slot: u8,
 }
@@ -26,8 +26,8 @@ pub struct State {
     /// Lifetime score: every unit ever collected, summed across runs. Survives
     /// `reset`; unlocks and budget are derived from it.
     pub score: u128,
-    /// Placed rocks, all put down before the run starts.
-    pub rocks: Vec<Rock>,
+    /// Placed reefs, all put down before the run starts.
+    pub reefs: Vec<Reef>,
     /// Ticks elapsed since the run started — the run clock (persisted as the
     /// save's `age`), advanced once per `tick`.
     pub tick_count: u64,
@@ -54,7 +54,7 @@ impl Default for State {
             collectable: 0,
             currency: 0,
             score: 0,
-            rocks: Vec::new(),
+            reefs: Vec::new(),
             tick_count: 0,
             started: false,
             anchor_pos: DEFAULT_ANCHOR_POS,
@@ -67,7 +67,7 @@ impl State {
         Self::default()
     }
 
-    /// Living matter in the tank. Grows only by photosynthesis and rock output;
+    /// Living matter in the tank. Grows only by photosynthesis and reef output;
     /// collection moves part of it into currency.
     pub fn biomass(&self) -> u128 {
         self.pool.iter().sum::<u128>() + self.nutrient + self.collectable
@@ -89,61 +89,61 @@ impl State {
         self.started
     }
 
-    /// How many individuals of `species` the placed rocks can house. Housing
-    /// counts from placement: capacity is a pure sum over the placed rocks and
+    /// How many individuals of `species` the placed reefs can house. Housing
+    /// counts from placement: capacity is a pure sum over the placed reefs and
     /// never depends on elapsed time. Time gates no purchase — only currency
     /// (the wall) and this capacity (the ceiling) do.
     pub fn capacity(&self, species: usize, p: &Params) -> u32 {
-        self.rocks
+        self.reefs
             .iter()
-            .map(|r| p.rock_kinds[r.kind].capacity[species])
+            .map(|r| p.reef_kinds[r.kind].capacity[species])
             .sum()
     }
 
-    /// Place a rock while composing the run. Succeeds only before the run is
+    /// Place a reef while composing the run. Succeeds only before the run is
     /// started, into a free in-range slot, for a kind the score has unlocked
     /// (`score >= unlock`), and within the placement budget (placed costs +
     /// this cost <= `budget(score)`). A rejected placement leaves the state
     /// untouched and returns false — placement spends budget, never currency or
     /// any other resource.
-    pub fn place_rock(&mut self, kind: usize, slot: u8, p: &Params) -> bool {
-        if self.started || kind >= p.rock_kinds.len() || slot >= SLOTS {
+    pub fn place_reef(&mut self, kind: usize, slot: u8, p: &Params) -> bool {
+        if self.started || kind >= p.reef_kinds.len() || slot >= SLOTS {
             return false;
         }
-        if self.rocks.iter().any(|r| r.slot == slot) {
+        if self.reefs.iter().any(|r| r.slot == slot) {
             return false;
         }
-        if self.score < p.rock_kinds[kind].unlock {
+        if self.score < p.reef_kinds[kind].unlock {
             return false;
         }
-        let placed: u32 = self.rocks.iter().map(|r| p.rock_kinds[r.kind].cost).sum();
-        if placed.saturating_add(p.rock_kinds[kind].cost) > p.budget(self.score) {
+        let placed: u32 = self.reefs.iter().map(|r| p.reef_kinds[r.kind].cost).sum();
+        if placed.saturating_add(p.reef_kinds[kind].cost) > p.budget(self.score) {
             return false;
         }
-        self.rocks.push(Rock { kind, slot });
+        self.reefs.push(Reef { kind, slot });
         true
     }
 
-    /// Remove the rock at `slot` while composing the run (for placing it
-    /// differently). Only while the run has not started; returns whether a rock
+    /// Remove the reef at `slot` while composing the run (for placing it
+    /// differently). Only while the run has not started; returns whether a reef
     /// was there to remove.
-    pub fn remove_rock(&mut self, slot: u8) -> bool {
+    pub fn remove_reef(&mut self, slot: u8) -> bool {
         if self.started {
             return false;
         }
-        if let Some(pos) = self.rocks.iter().position(|r| r.slot == slot) {
-            self.rocks.remove(pos);
+        if let Some(pos) = self.reefs.iter().position(|r| r.slot == slot) {
+            self.reefs.remove(pos);
             true
         } else {
             false
         }
     }
 
-    /// Commit the placement and begin the run. Succeeds when at least one rock
+    /// Commit the placement and begin the run. Succeeds when at least one reef
     /// is placed and the run has not already started; grants the seed currency
     /// once. This is the sole seed-grant point — one grant per run.
     pub fn start_run(&mut self, p: &Params) -> bool {
-        if self.started || self.rocks.is_empty() {
+        if self.started || self.reefs.is_empty() {
             return false;
         }
         self.started = true;
@@ -167,11 +167,11 @@ impl State {
     pub fn tick(&mut self, p: &Params) {
         let mut detritus: u128 = 0;
 
-        // 1. Rock output — the run's only income until life is bought, and a
-        // steady source after. Detritus accrues from the moment a rock is
+        // 1. Reef output — the run's only income until life is bought, and a
+        // steady source after. Detritus accrues from the moment a reef is
         // placed.
-        for rock in &self.rocks {
-            detritus += p.rock_kinds[rock.kind].output;
+        for reef in &self.reefs {
+            detritus += p.reef_kinds[reef.kind].output;
         }
 
         // 2. Photosynthesis — the only biological creation in the system.
