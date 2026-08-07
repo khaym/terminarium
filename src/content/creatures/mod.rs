@@ -87,11 +87,13 @@ pub struct SwimmerDef {
 }
 
 /// The modifiers a swimmer wears on top of the one patrol routine: a vertical
-/// drift, a two-frame pulse, and a second sprite row. They are independent —
-/// any subset composes, and each is off by default — so a creature states only
-/// the ones it uses and `Manner::PLAIN` says "a fish, nothing more". A new
-/// modifier joins this struct rather than the renderer, and `PLAIN` absorbs it
-/// for every definition that does not want it.
+/// drift, a two-frame pulse, a second sprite row, and the quirks that break up
+/// its glide. They are independent — any subset composes, and each is off by
+/// default — so a creature states only the ones it uses and `Manner::PLAIN`
+/// says "a fish, nothing more". A new modifier joins this struct rather than
+/// the renderer, and `PLAIN` absorbs it for every definition that does not want
+/// it: one field per motion, so the next one is an axis here plus an opt-in in
+/// the creatures that want it, and not a line anywhere else.
 pub struct Manner {
     /// Vertical sway added to the swimmer's lane.
     pub drift: Drift,
@@ -103,15 +105,22 @@ pub struct Manner {
     /// time, independent of the facing `right`/`left` already carry. `None` is
     /// a swimmer whose look never changes.
     pub pulse: Option<Pulse>,
+    /// Now and then, a burst of speed. `None` is a swimmer that keeps one pace.
+    pub dash: Option<Dash>,
+    /// Now and then, a turn back short of the usual point. `None` is a swimmer
+    /// that always sweeps its window end to end.
+    pub early_turn: Option<EarlyTurn>,
 }
 
 impl Manner {
-    /// A swimmer that only patrols: no drift, no pulse, one row. What every
-    /// fish before the jellyfish wears.
+    /// A swimmer that only patrols: no drift, no pulse, one row, no quirks.
+    /// What every fish before the jellyfish wore.
     pub const PLAIN: Manner = Manner {
         drift: Drift::STILL,
         under: "",
         pulse: None,
+        dash: None,
+        early_turn: None,
     };
 }
 
@@ -143,6 +152,52 @@ pub struct Pulse {
     pub look: Look,
     /// Frames each appearance is held. Never 0 (guarded at the draw).
     pub period: u64,
+}
+
+/// Now and then a swimmer breaks its glide for one lap — out from its window's
+/// left edge and back — and `Dash` is the first of those quirks: a short burst
+/// of speed. Which laps carry it is a hash of the individual (its reef's kind
+/// and slot, its ordinal) against the lap number, so the burst belongs to one
+/// fish rather than to every fish at once.
+///
+/// That is the opposite of `Drift`, which reads the frame alone and sways a
+/// colony as one bloom, and the asymmetry is deliberate. The drift moves a
+/// swimmer *across* lanes, where a per-fish phase would let one drifter sink
+/// onto the row of the one below it — the distinct-lane guarantee the whole
+/// colony rests on. A quirk only moves a swimmer *along* its own lane, which no
+/// other sprite shares, so it can be one fish's own at no cost. And one fish
+/// darting off on its own is exactly what a shoal of clockwork is missing.
+///
+/// A quirk is confined to one lap, and that lap ends where a plain lap would.
+/// The pinning is what keeps the picture a pure function of (state, frame): a
+/// burst that left the swimmer permanently ahead would have to be paid for by
+/// summing every window since launch, which a frame-indexed draw cannot do.
+pub struct Dash {
+    /// Steps the burst runs for. A step is the column the swimmer covers at its
+    /// usual pace, so the burst covers `span` extra columns and gives them back
+    /// over the rest of the lap. `0` is no burst. Held to half the lap, so the
+    /// giving back is never a swim backwards.
+    pub span: u64,
+    /// One lap in `rarity` carries the burst. Never 0 (guarded at the draw).
+    pub rarity: u64,
+}
+
+/// The second quirk: for one lap the swimmer turns back short of its usual
+/// turning point, so it reads as the one fish heading home while the rest of
+/// the tank is still on its way out. Gated per individual and per lap exactly
+/// as `Dash` is (see there for why a quirk is one fish's own and why it lasts a
+/// single lap).
+///
+/// The patrol window itself does not move: the swimmer covers less of the same
+/// window, rather than the window shrinking around it, so the reef still sets
+/// where its life ranges.
+pub struct EarlyTurn {
+    /// Columns short of the usual turning point. The turn never gives up more
+    /// than half the lap, so a window squeezed thin by a narrow pane cannot pin
+    /// a swimmer to one column.
+    pub short: i64,
+    /// One lap in `rarity` turns early. Never 0 (guarded at the draw).
+    pub rarity: u64,
 }
 
 /// One appearance of a swimmer: the body row it wears facing each way, and the

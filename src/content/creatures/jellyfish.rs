@@ -45,5 +45,8 @@ pub const DEF: SwimmerDef = SwimmerDef {
             },
             period: 4,
         }),
+        // No quirks: a bloom is carried by the same water, and one jellyfish
+        // darting off alone would read as a fish in a bell.
+        ..Manner::PLAIN
     },
 };

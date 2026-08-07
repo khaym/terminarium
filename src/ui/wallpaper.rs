@@ -16,7 +16,8 @@
 //! reef's colony share a cell. (Colonies on different reefs can still cross —
 //! the first run places a single reef; multi-reef spacing is a later concern.)
 //! The `mix()` hash is left only for freedoms that cannot cause overlap (frond
-//! height and sway, plankton drift, patrol phase).
+//! height and sway, plankton drift, patrol phase, and the quirk windows that
+//! break up a swimmer's glide — those move it only along its own lane).
 //!
 //! Character set and palette follow work/render-observations.md: layout uses
 //! ASCII + box-drawing + block + braille only, and colors stay in the
@@ -43,7 +44,7 @@ use ratatui::style::{Color, Style};
 use crate::app::{App, Phase};
 use crate::content::{
     self,
-    creatures::{Drift, SwimmerDef},
+    creatures::{Dash, Drift, SwimmerDef},
 };
 use crate::engine::{Reef, MICRO, SLOTS};
 
@@ -567,6 +568,118 @@ fn drift_offset(drift: &Drift, frame: u64) -> i64 {
     rise - drift.amplitude
 }
 
+/// One swimmer's identity, folded from everything that tells it apart from the
+/// rest of the tank: its host reef's kind and slot, and its ordinal within that
+/// reef's tier. The quirk gates hash this together with the lap number, which is
+/// what makes a quirk one fish's own rather than the whole shoal's.
+fn swimmer_id(reef: &Reef, ordinal: u64) -> u64 {
+    mix(reef.kind as u64, mix(u64::from(reef.slot), ordinal))
+}
+
+/// Hash salts for the quirk windows, one per motion — so a swimmer wearing both
+/// does not dash and turn back on the same laps for want of a second hash.
+const DASH_SALT: u64 = 71;
+const EARLY_TURN_SALT: u64 = 89;
+
+/// The one hash behind a quirk's window on `lap` for the swimmer `id`. As with
+/// the whale's crossing hash, one roll carries two things in disjoint fields:
+/// its low half gates the rarity (`quirk_open`), its high half carries the
+/// freedom left inside an open window (where in the lap a burst falls).
+///
+/// The fold is what makes the low half usable. `mix` ends in a multiply, so its
+/// low bits carry only the low bits of what went in: gating on them straight
+/// gave 36 swimmers just 8 distinct sets of laps, on a visibly regular beat
+/// (measured). Folding the high half — where every input bit has reached — down
+/// over the low one gave all 36 their own.
+fn quirk_roll(id: u64, lap: u64, salt: u64) -> u64 {
+    let h = mix(lap, mix(id, salt));
+    h ^ (h >> 32)
+}
+
+/// Whether a quirk's window is open: one lap in `rarity`, and never every lap by
+/// accident (a 0 rarity would open them all, so it is read as 1).
+fn quirk_open(roll: u64, rarity: u64) -> bool {
+    roll.is_multiple_of(rarity.max(1))
+}
+
+/// How a dash paces the lap it falls in: the swimmer takes two columns a step
+/// over the burst, then hands that ground back a column at a time over the rest
+/// of the lap. The result is monotone in `step` and pinned at both ends of the
+/// lap — a dashing lap opens and closes exactly where a plain one would.
+///
+/// Both halves are load-bearing. The burst is what the eye catches; the handing
+/// back is what keeps the draw a pure function of (state, frame), since a lap
+/// that left the swimmer permanently ahead could only be placed by summing every
+/// window since launch. `freedom` is the high half of the window's hash, which
+/// picks where in the lap the burst falls so it is not forever the same stretch
+/// of the same leg.
+fn dash_warp(dash: &Dash, freedom: u64, step: i64, lap_steps: i64) -> i64 {
+    // The burst has to fit the lap twice over: once to run, once to repay.
+    let span = dash.span.min((lap_steps / 2) as u64) as i64;
+    if span == 0 {
+        return step;
+    }
+    let start = (freedom % (lap_steps - 2 * span + 1) as u64) as i64;
+    let gained = (step - start).clamp(0, span);
+    // At least `span` steps are left to repay over, so the swimmer never gives
+    // back more than the column it would have swum anyway — it slows, it never
+    // slides backwards.
+    let repaid_over = lap_steps - start - span;
+    let repaid = span * (step - start - span).max(0) / repaid_over;
+    step + gained - repaid
+}
+
+/// How far along its patrol window a swimmer sits at `frame`, in columns from
+/// the window's left edge (`0..=travel`), and whether it faces right.
+///
+/// The beat is a lap: out to the far edge of the window over the first half and
+/// home over the second, `2 * travel` steps in all, one step per `slowdown`
+/// frames. `ordinal` offsets the phase so same-reef swimmers are never in
+/// lockstep.
+///
+/// A lap is also the unit a quirk lives in. Each of `Manner`'s quirks hashes
+/// (`id`, lap) into its own window: on an open lap the dash re-paces the swimmer
+/// and the early turn shortens how far out it goes, and on every other lap the
+/// beat is the plain triangle every fish has always swum. Since both leave the
+/// lap's two ends alone, a window can open or close between laps without moving
+/// the swimmer a cell.
+fn patrol_offset(
+    swimmer: &SwimmerDef,
+    id: u64,
+    ordinal: u64,
+    travel: i64,
+    frame: u64,
+) -> (i64, bool) {
+    if travel == 0 {
+        return (0, true); // a window one column wide: nowhere to swim
+    }
+    let lap_steps = 2 * travel;
+    let steps = frame / swimmer.slowdown + ordinal;
+    let lap = steps / lap_steps as u64;
+    let mut step = (steps % lap_steps as u64) as i64;
+    if let Some(dash) = &swimmer.manner.dash {
+        let roll = quirk_roll(id, lap, DASH_SALT);
+        if quirk_open(roll, dash.rarity) {
+            step = dash_warp(dash, roll >> 32, step, lap_steps);
+        }
+    }
+    // How far out this lap goes. The window itself does not move: a short lap
+    // is the same window less fully swum, and never less than half of it, so a
+    // pane thin enough to squeeze the window cannot pin the swimmer to a column.
+    let reach = match &swimmer.manner.early_turn {
+        Some(turn) if quirk_open(quirk_roll(id, lap, EARLY_TURN_SALT), turn.rarity) => {
+            (travel - turn.short).max((travel + 1) / 2)
+        }
+        _ => travel,
+    };
+    let (along, rightward) = if step < travel {
+        (step, true) // gliding out
+    } else {
+        (lap_steps - step, false) // gliding home
+    };
+    (along * reach / travel, rightward)
+}
+
 /// One swimmer on a bounded patrol around its host reef: it glides right to the
 /// window edge, then back left, staying within the reef center ± the creature's
 /// radius. The window is clamped so the whole sprite fits, so the swimmer is
@@ -577,8 +690,9 @@ fn drift_offset(drift: &Drift, frame: u64) -> i64 {
 ///
 /// The swimmer's `Manner` rides on top of that one glide: a `pulse` picks which
 /// appearance the frame wears, an `under` row hangs a second row below the body,
-/// and a `drift` sways the whole sprite over its lane. All three are read from
-/// the definition, so a new drifter is content — this routine names no creature.
+/// a `drift` sways the whole sprite over its lane, and the quirks (`patrol_offset`)
+/// break up the glide itself now and then. All of them are read from the
+/// definition, so a new drifter is content — this routine names no creature.
 #[allow(clippy::too_many_arguments)]
 fn patrol(
     area: Rect,
@@ -610,19 +724,10 @@ fn patrol(
     // Which appearance this frame wears — the pulse is a beat in time, so it
     // turns over independently of the heading picked just below.
     let look = swimmer.look(frame);
-    let (x, glyph, rightward) = if travel == 0 {
-        (left, look.right, true)
-    } else {
-        let period = (2 * travel) as u64;
-        // Phase offset per fish keeps same-reef fish out of lockstep, so even
-        // two sharing a lane never coincide every frame.
-        let t = ((frame / swimmer.slowdown + ordinal) % period) as i64;
-        if t < travel {
-            (left + t, look.right, true) // gliding right
-        } else {
-            (left + 2 * travel - t, look.left, false) // gliding back left
-        }
-    };
+    let id = swimmer_id(reef, ordinal);
+    let (along, rightward) = patrol_offset(swimmer, id, ordinal, travel, frame);
+    let x = left + along;
+    let glyph = if rightward { look.right } else { look.left };
 
     // The rows a sprite may start on: under the surface waves, high enough that
     // its last row clears the floor, and — where the pane has room — inset far
@@ -869,7 +974,7 @@ fn mix(i: u64, salt: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::creatures::{Drift, Look, Manner, Pulse};
+    use crate::content::creatures::{Dash, Drift, EarlyTurn, Look, Manner, Pulse};
 
     /// A pane to patrol one swimmer in, and the reef it patrols around.
     fn pane(width: u16, height: u16) -> (Rect, Reef) {
@@ -932,6 +1037,7 @@ mod tests {
                     },
                     period: pulse_period,
                 }),
+                ..Manner::PLAIN
             },
         }
     }
@@ -1065,6 +1171,300 @@ mod tests {
             Some(3),
             "all three cells of the bell must fit a six-column pane, got {rows:?}"
         );
+    }
+
+    /// A fish that quirks to order: the two motions the shipped fish opted
+    /// into, at whatever span, reach and rarity the test names. `rarity: 1`
+    /// opens every lap, which is how a test reads the *shape* of a quirk
+    /// without depending on which laps the hash happens to pick.
+    fn quirky(dash: Option<Dash>, early_turn: Option<EarlyTurn>) -> SwimmerDef {
+        SwimmerDef {
+            right: "><>",
+            left: "<><",
+            slowdown: 1,
+            radius: 5,
+            reef_bias: true,
+            color: Color::Indexed(200),
+            accent: None,
+            manner: Manner {
+                dash,
+                early_turn,
+                ..Manner::PLAIN
+            },
+        }
+    }
+
+    /// Where one swimmer sits along its window over `frames` consecutive frames,
+    /// in columns from the window's left edge.
+    fn offsets(swimmer: &SwimmerDef, id: u64, travel: i64, frames: u64) -> Vec<i64> {
+        (0..frames)
+            .map(|f| patrol_offset(swimmer, id, 0, travel, f).0)
+            .collect()
+    }
+
+    /// The largest a swimmer's position moves between two consecutive frames.
+    fn widest_step(trace: &[i64]) -> i64 {
+        trace
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// A swimmer that opted into no quirk keeps exactly the beat every fish has
+    /// always had: out and back on the bare triangle, one column a step, the
+    /// same for every individual. This is the jellyfish's guarantee — a bloom
+    /// that drifts as one is not the place for a fish's private impulse — and
+    /// it holds by the definition alone, with no renderer opt-out.
+    #[test]
+    fn a_swimmer_without_quirks_keeps_the_plain_beat() {
+        let travel = 10;
+        let plain = quirky(None, None);
+        let swimmers = [&crate::content::creatures::jellyfish::DEF, &plain];
+        for swimmer in swimmers {
+            for id in [0u64, 7, 1_234_567] {
+                for frame in 0..400u64 {
+                    let step = ((frame / swimmer.slowdown) % (2 * travel) as u64) as i64;
+                    let want = if step < travel {
+                        (step, true)
+                    } else {
+                        (2 * travel - step, false)
+                    };
+                    assert_eq!(
+                        patrol_offset(swimmer, id, 0, travel, frame),
+                        want,
+                        "a quirkless swimmer must hold the plain triangle at frame {frame} (id {id})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A dash is a burst inside one lap: the swimmer takes two columns in a
+    /// step instead of one, and gives that ground back over the rest of the lap
+    /// so the lap ends where a plain lap would. Both halves matter — the burst
+    /// is what the eye sees, and the giving back is what keeps the picture a
+    /// pure function of the frame (nothing accumulates across laps).
+    #[test]
+    fn a_dash_doubles_a_stride_and_gives_the_ground_back_inside_its_lap() {
+        let travel = 10;
+        let lap = 2 * travel as u64;
+        let fish = quirky(
+            Some(Dash {
+                span: 5,
+                rarity: 1, // every lap, so the shape is what is under test
+            }),
+            None,
+        );
+        let plain = quirky(None, None);
+
+        for id in [1u64, 2, 3, 99] {
+            let dashed = offsets(&fish, id, travel, 6 * lap);
+            let bare = offsets(&plain, id, travel, 6 * lap);
+            assert_ne!(dashed, bare, "the dash must reach the picture (id {id})");
+            for l in 0..6 {
+                let seam = (l * lap) as usize;
+                assert_eq!(
+                    dashed[seam], bare[seam],
+                    "lap {l} must open where a plain lap would (id {id})"
+                );
+            }
+            assert_eq!(
+                widest_step(&dashed),
+                2,
+                "the burst is two columns a step, never more (id {id})"
+            );
+            assert!(
+                dashed.iter().all(|&x| (0..=travel).contains(&x)),
+                "a dash stays inside the patrol window (id {id})"
+            );
+            // A burst somewhere in every lap, not one burst spread thin.
+            for l in 0..6 {
+                let seam = (l * lap) as usize;
+                let this_lap = &dashed[seam..seam + lap as usize];
+                assert_eq!(
+                    widest_step(this_lap),
+                    2,
+                    "lap {l} must carry the burst (id {id}): {this_lap:?}"
+                );
+            }
+        }
+    }
+
+    /// An early turn gives up the far end of the lap, not the window: the
+    /// swimmer turns back `short` columns early and still comes home to the
+    /// same left edge, so where the reef put its life is unchanged. It swims
+    /// the shorter lap rather than skipping it — never more than a column a
+    /// step — and a window squeezed thin by a narrow pane keeps at least half.
+    #[test]
+    fn an_early_turn_stops_short_without_moving_the_window() {
+        let fish = quirky(
+            None,
+            Some(EarlyTurn {
+                short: 3,
+                rarity: 1, // every lap, so the shape is what is under test
+            }),
+        );
+        let travel = 10;
+        let trace = offsets(&fish, 4, travel, 5 * (2 * travel) as u64);
+        assert_eq!(
+            trace.iter().copied().max(),
+            Some(travel - 3),
+            "the turn comes three columns early: {trace:?}"
+        );
+        assert_eq!(
+            trace.iter().copied().min(),
+            Some(0),
+            "and the swimmer still comes home to the window's edge: {trace:?}"
+        );
+        assert_eq!(
+            widest_step(&trace),
+            1,
+            "the shorter lap is swum, not skipped: {trace:?}"
+        );
+
+        // A window barely wider than the turn: the swimmer still gets half of
+        // it, rather than being pinned to a column.
+        let narrow = offsets(&fish, 4, 4, 40);
+        assert_eq!(
+            narrow.iter().copied().max(),
+            Some(2),
+            "a thin window keeps half its lap: {narrow:?}"
+        );
+    }
+
+    /// A quirk is one fish's own. Two individuals of the same species — a
+    /// different reef, or the next ordinal on the same reef — quirk on
+    /// different laps, so the tank never twitches as one. (The drift is
+    /// deliberately the other way round; see `Dash`'s note on why.)
+    #[test]
+    fn a_quirk_belongs_to_one_swimmer_not_the_shoal() {
+        let others = [
+            Reef { kind: 0, slot: 5 },
+            Reef { kind: 1, slot: 4 },
+            Reef { kind: 0, slot: 4 },
+        ];
+        let reef = Reef { kind: 0, slot: 4 };
+        let mine: Vec<u64> = (0..400)
+            .filter(|&lap| quirk_open(quirk_roll(swimmer_id(&reef, 0), lap, DASH_SALT), 8))
+            .collect();
+        assert!(!mine.is_empty(), "the scan must cover some open laps");
+        for (i, other) in others.iter().enumerate() {
+            // The third neighbour is the same reef, one ordinal along.
+            let ordinal = u64::from(i == 2);
+            let theirs: Vec<u64> = (0..400)
+                .filter(|&lap| {
+                    quirk_open(quirk_roll(swimmer_id(other, ordinal), lap, DASH_SALT), 8)
+                })
+                .collect();
+            // Not merely a different set: mostly a different set. A hash whose
+            // individuals only shift the same beat by a lap or two would pass an
+            // inequality and still twitch the tank as one.
+            let shared = mine.iter().filter(|lap| theirs.contains(lap)).count();
+            assert!(
+                shared * 2 < mine.len(),
+                "reef {other:?} ordinal {ordinal} must quirk on its own laps, \
+                 not on {shared} of my {}",
+                mine.len()
+            );
+        }
+    }
+
+    /// The quirk windows open on roughly one lap in K — the rarity that keeps a
+    /// burst a surprise rather than a tic. The rates come from the shipped
+    /// definitions, so retuning a fish moves this test with it (and a fish that
+    /// dropped its opt-in fails here, rather than passing silently).
+    #[test]
+    fn quirk_windows_open_on_roughly_one_lap_in_k() {
+        const LAPS: u64 = 10_000;
+        let small = &crate::content::creatures::small_fish::DEF;
+        let big = &crate::content::creatures::big_fish::DEF;
+        let mut cases: Vec<(&str, u64, u64)> = Vec::new();
+        for (name, manner) in [("small fish", &small.manner), ("big fish", &big.manner)] {
+            let dash = manner
+                .dash
+                .as_ref()
+                .unwrap_or_else(|| panic!("the {name} must keep its dash"));
+            let turn = manner
+                .early_turn
+                .as_ref()
+                .unwrap_or_else(|| panic!("the {name} must keep its early turn"));
+            cases.push((name, dash.rarity, DASH_SALT));
+            cases.push((name, turn.rarity, EARLY_TURN_SALT));
+        }
+        for (name, rarity, salt) in cases {
+            let id = swimmer_id(&Reef { kind: 0, slot: 4 }, 0);
+            let open = (0..LAPS)
+                .filter(|&lap| quirk_open(quirk_roll(id, lap, salt), rarity))
+                .count() as u64;
+            let expected = LAPS / rarity;
+            // The same generous +-20% band the whale's crossings are held to:
+            // "rare, not never / not always", without being brittle.
+            assert!(
+                open > expected * 4 / 5 && open < expected * 6 / 5,
+                "{name}: {open} open laps outside the design band around {expected} (1/{rarity})"
+            );
+        }
+    }
+
+    /// The invariants a quirk must never break, held over the shipped fish and
+    /// every window width a pane can hand them: the swimmer stays inside its
+    /// patrol window, never moves more than two cells in a frame (the burst's
+    /// stride, and nothing beyond it), and still sweeps the whole window over
+    /// time — a quirk is a flourish, not a cage. The scan is long enough that
+    /// both quirks really fire, which the open-lap counts assert outright.
+    #[test]
+    fn a_quirked_fish_stays_inside_its_window_and_sweeps_it_all() {
+        const FRAMES: u64 = 20_000;
+        let small = &crate::content::creatures::small_fish::DEF;
+        let big = &crate::content::creatures::big_fish::DEF;
+        for (name, swimmer) in [("small fish", small), ("big fish", big)] {
+            for travel in [1i64, 3, 7, 10, 20] {
+                let id = swimmer_id(&Reef { kind: 0, slot: 4 }, 0);
+                let trace = offsets(swimmer, id, travel, FRAMES);
+                assert!(
+                    trace.iter().all(|&x| (0..=travel).contains(&x)),
+                    "{name}: left its window (travel {travel})"
+                );
+                assert!(
+                    widest_step(&trace) <= 2,
+                    "{name}: moved more than two cells in a frame (travel {travel})"
+                );
+                assert_eq!(
+                    trace.iter().copied().min(),
+                    Some(0),
+                    "{name}: never reached the near edge (travel {travel})"
+                );
+                assert_eq!(
+                    trace.iter().copied().max(),
+                    Some(travel),
+                    "{name}: never reached the far edge (travel {travel})"
+                );
+
+                // Not a vacuous scan: both windows opened inside it.
+                let laps = FRAMES / (2 * travel as u64 * swimmer.slowdown);
+                for (quirk, rarity, salt) in [
+                    (
+                        "dash",
+                        swimmer.manner.dash.as_ref().expect("a dash").rarity,
+                        DASH_SALT,
+                    ),
+                    (
+                        "early turn",
+                        swimmer.manner.early_turn.as_ref().expect("a turn").rarity,
+                        EARLY_TURN_SALT,
+                    ),
+                ] {
+                    let open = (0..laps)
+                        .filter(|&lap| quirk_open(quirk_roll(id, lap, salt), rarity))
+                        .count();
+                    assert!(
+                        open > 0,
+                        "{name}: the {quirk} never fired in {laps} laps (travel {travel})"
+                    );
+                }
+            }
+        }
     }
 
     /// The window gate opens on roughly 1 in K windows — the rarity that makes a
