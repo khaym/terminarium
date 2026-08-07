@@ -18,7 +18,15 @@ use terminarium::ui;
 /// literal, so appending a kind to the manifest cannot silently misnumber an
 /// unrelated test.
 fn kind_index(name: &str) -> usize {
-    Params::default()
+    kind_index_in(&Params::default(), name)
+}
+
+/// The index a kind's name resolves to in `params`'s manifest. Same rule as
+/// `kind_index`, for a test that builds a manifest of its own: it names the
+/// kind it places, so reordering the kinds it declares (which is what several
+/// of these tests are about) cannot silently misnumber the placed reef.
+fn kind_index_in(params: &Params, name: &str) -> usize {
+    params
         .reef_kinds
         .iter()
         .position(|k| k.name == name)
@@ -869,17 +877,19 @@ fn placement_lists_unlocked_kinds_budget_and_next_unlock() {
 /// placed reef has spent out of the score's ceiling, and one goal line names a
 /// kind still to come.
 ///
-/// Which one it names is the rule pinned here: the *first locked kind in
-/// manifest order*, not the nearest unlock ahead (that is the running HUD's
-/// rule, `hud_shows_score_and_next_reef`). Shipped content lists its kinds in
-/// ascending unlock order, where the two rules always agree and neither can be
-/// told from the other; the manifest below is deliberately out of that order so
-/// they disagree, and the panel's own rule shows.
+/// Which one it names is the rule pinned here: the *nearest unlock ahead of the
+/// score*, wherever that kind sits in the manifest — the same rule the running
+/// HUD reads (`hud_shows_score_and_next_reef`), so the two screens can never
+/// name different reefs (the agreement itself is the last block below).
+/// Manifest order is the save format and append-only, so it is not necessarily
+/// ascending in unlock: the manifest below declares a late unlock before an
+/// earlier one, as shipped content now does, and the goal still follows the
+/// score rather than the position.
 #[test]
-fn placement_panel_reads_budget_and_names_the_first_locked_kind() {
+fn placement_panel_reads_budget_and_names_the_nearest_locked_kind() {
     // Manifest order: amber, then umber (a late unlock), then cobalt (an
     // earlier one). Between the two unlocks both are still locked, so the
-    // nearest-unlock rule would name cobalt and manifest order names umber.
+    // nearest unlock ahead is cobalt while manifest order would name umber.
     let params = || {
         synthetic_params(
             vec![
@@ -895,12 +905,12 @@ fn placement_panel_reads_budget_and_names_the_first_locked_kind() {
     state.score = 10_000 * MICRO; // budget 5; umber and cobalt both locked
     let screen = screen_with_params(state, params(), 100, 30);
     assert!(
-        screen.contains("umber unlocks at 60000"),
-        "the goal names the first locked kind in manifest order: {screen}"
+        screen.contains("cobalt unlocks at 20000"),
+        "the goal names the nearest unlock ahead: {screen}"
     );
     assert!(
-        !screen.contains("cobalt unlocks"),
-        "a nearer unlock further down the manifest is not the one named: {screen}"
+        !screen.contains("umber unlocks"),
+        "a further unlock earlier in the manifest is not the one named: {screen}"
     );
     assert!(
         screen.contains("amber(1)"),
@@ -917,10 +927,13 @@ fn placement_panel_reads_budget_and_names_the_first_locked_kind() {
 
     // A cobalt placed (cost 2) spends 2 of the 5, so the panel reads the
     // remaining room; cobalt is unlocked at this score, so it also joins the
-    // list, and umber — still locked — stays the goal.
+    // list, and the goal moves on to umber — now the only kind still locked.
     let mut state = State::new();
     state.score = 20_000 * MICRO;
-    state.reefs = vec![Reef { kind: 2, slot: 0 }];
+    state.reefs = vec![Reef {
+        kind: kind_index_in(&params(), "cobalt"),
+        slot: 0,
+    }];
     let screen = screen_with_params(state, params(), 100, 30);
     assert!(
         screen.contains("budget 2/5"),
@@ -932,7 +945,78 @@ fn placement_panel_reads_budget_and_names_the_first_locked_kind() {
     );
     assert!(
         screen.contains("umber unlocks at 60000"),
-        "the last locked kind is still the goal: {screen}"
+        "reaching an unlock moves the goal on to the last locked kind: {screen}"
+    );
+
+    // Past every unlock there is nothing left to work toward, so the goal line
+    // is absent rather than naming an unlocked kind — the HUD drops its goal at
+    // the same point (`hud_shows_score_and_next_reef`).
+    let mut state = State::new();
+    state.score = 60_000 * MICRO;
+    let screen = screen_with_params(state, params(), 100, 30);
+    assert!(
+        !screen.contains("unlocks at"),
+        "no goal once every kind is unlocked: {screen}"
+    );
+
+    // Two kinds sharing one unlock: the nearest unlock ahead is one score, but
+    // the panel names *a kind*, so the tie goes to the one declared first. (The
+    // headroom nudge breaks its own tie the other way, naming the later of two
+    // kinds on a wall — it announces the newest reward just handed over, not
+    // the goal ahead. Shipped content holds no tie either way.)
+    let tied = synthetic_params(
+        vec![
+            synthetic_kind("amber", 1, 0),
+            synthetic_kind("cobalt", 1, 20_000 * MICRO),
+            synthetic_kind("umber", 1, 20_000 * MICRO),
+        ],
+        vec![(0, 1)],
+    );
+    let mut state = State::new();
+    state.score = 10_000 * MICRO;
+    let screen = screen_with_params(state, tied, 100, 30);
+    assert!(
+        screen.contains("cobalt unlocks at 20000") && !screen.contains("umber unlocks"),
+        "kinds tied on an unlock: the first declared is the one named: {screen}"
+    );
+
+    // The two goal readings on one manifest, which is the whole point of the
+    // shared rule: the panel before a run and the HUD during one name the same
+    // reef. An out-of-order manifest is what used to tell them apart — the
+    // panel read manifest order (umber) while the HUD read the nearest unlock
+    // ahead (cobalt), so one screen contradicted the other.
+    let shared = || {
+        synthetic_params(
+            vec![
+                synthetic_kind("amber", 1, 0),
+                synthetic_kind("umber", 1, 60_000 * MICRO),
+                synthetic_kind("cobalt", 1, 20_000 * MICRO),
+            ],
+            // One budget step, so a placed reef spends the whole budget and the
+            // HUD shows its goal line rather than the rebuild nudge.
+            vec![(0, 1)],
+        )
+    };
+    let mut placing = State::new();
+    placing.score = 10_000 * MICRO;
+    let panel = screen_with_params(placing, shared(), 100, 30);
+
+    let mut running = fixed_state();
+    running.score = 10_000 * MICRO;
+    running.collectable = 0; // no surplus to fold into the score under test
+    running.reefs = vec![Reef {
+        kind: kind_index_in(&shared(), "amber"),
+        slot: 2,
+    }];
+    let hud = screen_with_params(running, shared(), 100, 30);
+
+    assert!(
+        panel.contains("cobalt unlocks at 20000") && !panel.contains("60000"),
+        "the placement panel points at the nearest unlock ahead: {panel}"
+    );
+    assert!(
+        hud.contains("next reef at 20000") && !hud.contains("60000"),
+        "the running HUD points at the same one: {hud}"
     );
 }
 
@@ -989,10 +1073,10 @@ fn hud_shows_score_and_next_reef() {
     );
 
     // Nearest ahead, not first in the manifest — the other reading of "next",
-    // and the placement panel's rule
-    // (`placement_panel_reads_budget_and_names_the_first_locked_kind`). Shipped
-    // content lists its kinds in ascending unlock order, where the two agree; a
-    // manifest out of that order tells them apart.
+    // which no screen uses: the placement panel reads this same rule
+    // (`placement_panel_reads_budget_and_names_the_nearest_locked_kind`), and a
+    // manifest out of unlock order, which shipped content now is, would tell
+    // the two readings apart if they had drifted.
     let out_of_order = synthetic_params(
         vec![
             synthetic_kind("amber", 1, 0),

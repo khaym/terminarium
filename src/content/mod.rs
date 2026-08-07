@@ -29,14 +29,16 @@ use crate::engine::ReefKind;
 pub mod creatures;
 
 /// Declares the kind modules and builds the manifest from one list, so
-/// registering a kind and placing it in the unlock order cannot drift apart —
-/// they are the same edit. Each name is a `<name>.rs` beside this file exposing
+/// registering a kind and placing it in the manifest cannot drift apart — they
+/// are the same edit. Each name is a `<name>.rs` beside this file exposing
 /// `pub const DEF: ReefDef`.
 macro_rules! kinds {
     ($($kind:ident),+ $(,)?) => {
         $(mod $kind;)+
 
-        /// Every kind the game knows, in unlock order.
+        /// Every kind the game knows, in the order they were added — not in
+        /// unlock order: a kind added later may unlock earlier than one already
+        /// shipped.
         ///
         /// A kind's position here *is* its identity in a save file (`Reef::kind`
         /// is an index into this list, and so into `Params::reef_kinds`), which

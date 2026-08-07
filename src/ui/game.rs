@@ -8,7 +8,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 use super::wallpaper;
 use crate::app::App;
-use crate::engine::{Species, MICRO, SLOTS, SPECIES};
+use crate::engine::{ReefKind, Species, MICRO, SLOTS, SPECIES};
 
 const HUD_HEIGHT: u16 = 5;
 const LABELS: [&str; SPECIES] = ["Algae", "Plankton", "Small fish", "Big fish"];
@@ -207,22 +207,32 @@ fn score_line(app: &App) -> (String, bool) {
         };
         return (line, true);
     }
-    let next = app
-        .params
-        .reef_kinds
-        .iter()
-        .map(|k| k.unlock)
-        .filter(|&u| u > score)
-        .min();
-    let line = match next {
-        Some(unlock) => format!(
+    let line = match next_locked_kind(app) {
+        Some(rk) => format!(
             "score {}   next reef at {}",
             fmt_amount(score),
-            fmt_amount(unlock)
+            fmt_amount(rk.unlock)
         ),
         None => format!("score {}", fmt_amount(score)),
     };
     (line, false)
+}
+
+/// The reef kind the score is working toward: the nearest unlock ahead of it,
+/// and the first such kind in the manifest when two share that unlock. `None`
+/// once every kind is unlocked — there is nothing left to name.
+///
+/// The one rule behind both goal readings — the HUD's `next reef at N` and the
+/// placement panel's `<kind> unlocks at N` — so the two screens can never point
+/// the player at different reefs. It reads the unlock score alone: manifest
+/// order is the append-only save format, not a progression order, so a kind
+/// added later may unlock earlier than one already shipped.
+fn next_locked_kind(app: &App) -> Option<&ReefKind> {
+    app.params
+        .reef_kinds
+        .iter()
+        .filter(|k| k.unlock > app.state.score)
+        .min_by_key(|k| k.unlock)
 }
 
 /// The placement screen: an empty tank the player composes a reef into. A panel
@@ -289,13 +299,9 @@ fn render_placement(app: &App, area: Rect, buf: &mut Buffer) {
         Style::new().fg(TEXT),
     );
 
-    // The next reef still to unlock — a target for this run's score.
-    if let Some(rk) = app
-        .params
-        .reef_kinds
-        .iter()
-        .find(|k| app.state.score < k.unlock)
-    {
+    // The next reef still to unlock — a target for this run's score, and the
+    // same one the running HUD names.
+    if let Some(rk) = next_locked_kind(app) {
         buf.set_stringn(
             left,
             area.top() + 4,
