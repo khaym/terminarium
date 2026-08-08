@@ -92,8 +92,8 @@ Placing the reef (until `s`):
 | Key | Action |
 |---|---|
 | `h` `l` (or `←` `→`) | move along the sea floor |
-| `j` `k` (or `↑` `↓`) | pick a rock to place |
-| `Enter` / `Backspace` | drop / lift a rock |
+| `j` `k` (or `↑` `↓`) | pick a reef to place |
+| `Enter` / `Backspace` | drop / lift a reef |
 | `s` | commit the reef and start the sea |
 
 During the run:

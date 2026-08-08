@@ -48,8 +48,8 @@ first algae, then shrink the pane and get back to work.
 Placing the reef (until s):
 
   h l (or left/right)  move along the sea floor
-  j k (or up/down)     pick a rock to place
-  Enter / Backspace    drop / lift a rock
+  j k (or up/down)     pick a reef to place
+  Enter / Backspace    drop / lift a reef
   s                    commit the reef and start the sea
 
 During the run:
