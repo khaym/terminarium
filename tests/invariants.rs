@@ -1,8 +1,10 @@
 //! Invariant tests — the executable form of the business rules fixed in
 //! work/economy-model.md. Parameter values are placeholders; these tests are
-//! the constraints they must keep satisfying while being tuned.
+//! the constraints they must keep satisfying while being tuned. The two
+//! exceptions are frozen rather than tunable: the ecosystem's return w, and the
+//! collection band each placement cost buys (`COLLECTION_BAND`).
 
-use terminarium::engine::{Params, Species, State, ANCHOR_POS_MAX, MICRO};
+use terminarium::engine::{Params, ReefKind, Species, State, ANCHOR_POS_MAX, MICRO};
 
 /// A tank with every trophic level active and non-trivial stocks, so that
 /// every branch of the tick (uptake, predation, decay, recycling) is live.
@@ -15,34 +17,60 @@ fn populated_state() -> State {
     s
 }
 
-/// Invariant 1 — conservation: with reefs placed, the only things that create
-/// living matter are photosynthesis and reef output. Exact equality, every
-/// tick.
+/// Invariant 1 — conservation: with reefs placed, three things and only three
+/// create living matter — photosynthesis, reef output, and the ecosystem's
+/// return (what the life above the algae hands back, in proportion to the reef
+/// it lives in). Exact equality, every tick.
 #[test]
 fn conservation_per_tick() {
     let p = Params::default();
+    let rock = kind_index("rock");
     let mut s = populated_state();
-    assert!(s.place_reef(0, 0, &p));
+    assert!(s.place_reef(rock, 0, &p));
     assert!(s.start_run(&p));
-    let reef_output = p.reef_kinds[0].output;
+
+    // One reef, and it houses every tier of this tank — so every individual
+    // above the algae returns that one reef's cost, with no housing choice to
+    // make.
+    let housed: u32 = s.population[1..].iter().sum();
+    for i in 1..4 {
+        assert!(s.population[i] <= p.reef_kinds[rock].capacity[i]);
+    }
+    let returned = p
+        .ecosystem_return
+        .apply(u128::from(housed) * u128::from(p.reef_kinds[rock].cost) * MICRO);
+    assert!(returned > 0, "the third source must actually be live here");
+
     for _ in 0..10_000 {
         let before = s.biomass();
         s.tick(&p);
-        let created = u128::from(s.population[0]) * p.photosynthesis + reef_output;
+        let created =
+            u128::from(s.population[0]) * p.photosynthesis + p.reef_kinds[rock].output + returned;
         assert_eq!(s.biomass(), before + created);
     }
 }
 
 /// Invariant 1 (operations) — place allocates budget without touching biomass;
-/// collect moves matter to currency without creating or destroying any.
+/// collect moves matter to currency without creating or destroying any. The
+/// ecosystem's return is ordinary surplus once it lands: a tick's worth of it
+/// sits in the same collectable pile and leaves on the same collect, so the
+/// third source adds income without adding a resource to keep track of.
 #[test]
 fn conservation_across_operations() {
     let p = Params::default();
     let mut s = populated_state();
 
     let before = s.biomass();
-    assert!(s.place_reef(0, 0, &p));
+    assert!(s.place_reef(kind_index("rock"), 0, &p));
     assert_eq!(s.biomass(), before, "placement moves no biomass");
+
+    assert!(s.start_run(&p));
+    let pile = s.collectable;
+    s.tick(&p);
+    assert!(
+        s.collectable > pile,
+        "a tick of the three sources adds to the collectable pile"
+    );
 
     let before_total = s.biomass() + s.currency;
     s.collect();
@@ -185,13 +213,22 @@ fn first_wall_at_two_to_three_peeks() {
 }
 
 /// Invariant 7 — the detritus cycle sustains: nutrient recycling actually
-/// feeds the algae, collectables keep accruing at the photosynthesis rate,
-/// and no pool grows without bound.
+/// feeds the algae, collectables keep accruing at the rate the three sources
+/// create matter, and no pool grows without bound.
+///
+/// A filled rock sea is the tank this is read on, because all three sources are
+/// live in it at once — photosynthesis from its algae, output from the reef
+/// itself, and the return from the three tiers it houses above the algae.
 #[test]
 fn detritus_cycle_sustains_and_stays_bounded() {
     let p = Params::default();
+    let rock = kind_index("rock");
     let mut s = State::new();
-    s.population = [10, 3, 2, 1];
+    assert!(s.place_reef(rock, 0, &p));
+    assert!(s.start_run(&p));
+    for i in 0..4 {
+        s.population[i] = s.capacity(i, &p);
+    }
 
     // Reach steady state, then observe a second window of the same length.
     s.advance(10_000, &p);
@@ -218,10 +255,16 @@ fn detritus_cycle_sustains_and_stays_bounded() {
     s.advance(10_000, &p);
 
     // Collectables keep flowing, and in steady state the collection rate
-    // converges to the photosynthesis rate (sole source, sole sink) —
-    // allow 20% tolerance for the transient and integer rounding.
+    // converges to what the three sources create (they are the only sources,
+    // and collection is the only sink) — allow 20% tolerance for the transient
+    // and integer rounding.
     let window_gain = s.collectable - mid_collectable;
-    let created = 10_000u128 * u128::from(s.population[0]) * p.photosynthesis;
+    let housed: u128 = s.population[1..].iter().map(|&n| u128::from(n)).sum();
+    let per_tick = u128::from(s.population[0]) * p.photosynthesis
+        + p.reef_kinds[rock].output
+        + p.ecosystem_return
+            .apply(housed * u128::from(p.reef_kinds[rock].cost) * MICRO);
+    let created = 10_000u128 * per_tick;
     assert!(window_gain > 0, "collectable must keep accruing");
     assert!(
         window_gain * 10 > created * 8 && window_gain * 10 < created * 12,
@@ -432,6 +475,140 @@ fn steady_collection_over_window(reefs: &[(usize, u8)], score: u128, window: u64
     s.collectable - before
 }
 
+/// The frozen collection band (work/economy-model.md, "コスト帯ルール"): what one
+/// filled reef collects per tick at steady state, per placement cost, in MICRO.
+/// The design table, not a measurement — the test below measures against it.
+const COLLECTION_BAND: [(u32, u128, u128); 3] = [
+    (1, 10 * MICRO, 12 * MICRO),
+    (2, 26 * MICRO, 30 * MICRO),
+    (3, 39 * MICRO, 45 * MICRO),
+];
+
+/// The band a reef of this cost is held to.
+fn band_for(cost: u32) -> (u128, u128) {
+    COLLECTION_BAND
+        .iter()
+        .find(|&&(c, _, _)| c == cost)
+        .map(|&(_, lo, hi)| (lo, hi))
+        .unwrap_or_else(|| panic!("no collection band for a cost-{cost} reef"))
+}
+
+/// The score at which a kind can first be placed: its own unlock, or the first
+/// budget step that affords its cost, whichever comes later. Read off the
+/// schedule rather than written out, so retuning either moves with it.
+fn placeable_at(kind: &ReefKind, p: &Params) -> u128 {
+    let affords = p
+        .budget_steps
+        .iter()
+        .filter(|&&(_, budget)| budget >= kind.cost)
+        .map(|&(threshold, _)| threshold)
+        .min()
+        .unwrap_or_else(|| panic!("{} costs more than any budget step", kind.name));
+    affords.max(kind.unlock)
+}
+
+/// Invariant 13 — the collection band: every kind the game ships, filled to its
+/// own housing and converged, collects at a rate inside the band its placement
+/// cost buys. The bands are disjoint and ascending, so what a reef costs tells
+/// the player what it earns, and a costlier reef always out-collects a cheaper
+/// one however its housing is shaped.
+///
+/// This is the rule the pair of lagoon-vs-coral / lagoon-vs-kelp asserts used to
+/// state one kind at a time, and it states it for every kind at once — including
+/// the kinds added after this test was written, since it walks the manifest.
+/// Before the ecosystem's return (#30) it could not be written: steady collection
+/// tracked algae housing and reef output almost alone, so a cost-3 grotto (2
+/// algae) collected exactly what a cost-2 coral did and the cost-3 band was
+/// empty. The third source is what puts a reef's upper tiers into its rate and so
+/// lets the cost band mean something.
+///
+/// The band is frozen (`COLLECTION_BAND`); the weight w behind it is frozen in
+/// `Params::ecosystem_return`. Retuning either — w, an output, a capacity — is
+/// meant to turn this red: the numbers are a design agreement, and moving one
+/// asks a human to re-agree it rather than to re-bless a measurement.
+#[test]
+fn every_kind_collects_inside_the_band_its_cost_buys() {
+    const WINDOW: u64 = 5_000;
+    let p = Params::default();
+
+    for (i, kind) in p.reef_kinds.iter().enumerate() {
+        let (lo, hi) = band_for(kind.cost);
+        let collected = steady_collection_over_window(&[(i, 0)], placeable_at(kind, &p), WINDOW);
+        let (floor, ceiling) = (lo * u128::from(WINDOW), hi * u128::from(WINDOW));
+        let rate = collected as f64 / WINDOW as f64 / MICRO as f64;
+        let (lo_f, hi_f) = (lo as f64 / MICRO as f64, hi as f64 / MICRO as f64);
+        let outside = if collected < floor {
+            (rate - lo_f) / lo_f * 100.0
+        } else if collected > ceiling {
+            (rate - hi_f) / hi_f * 100.0
+        } else {
+            0.0
+        };
+        println!(
+            "{:<8} cost {} -> {rate:7.3}/tick   band [{lo_f:.1}, {hi_f:.1}]",
+            kind.name, kind.cost
+        );
+        assert!(
+            (floor..=ceiling).contains(&collected),
+            "{} (cost {}) collects {rate:.3}/tick, outside its band [{lo_f:.1}, {hi_f:.1}] \
+             by {outside:+.1}% (w = {}/{})",
+            kind.name,
+            kind.cost,
+            p.ecosystem_return.num,
+            p.ecosystem_return.den
+        );
+    }
+}
+
+/// Invariant 13 (housing) — an individual returns what the reef it lives in
+/// costs, and which reef that is never depends on the order the player dropped
+/// them. Housing is not stored: the tick settles it by filling the costliest
+/// reef with room first, so the same reefs and the same populations always
+/// return the same, whichever slot went down first. (Housed by placement order
+/// instead, the sea below would return 1.8 or 3.6 per tick depending only on
+/// which key was pressed first — a difference the player could neither see nor
+/// intend.)
+#[test]
+fn an_individual_returns_what_the_reef_it_lives_in_costs() {
+    let p = Params::default();
+    let (rock, coral) = (kind_index("rock"), kind_index("coral"));
+
+    // One coral beside one rock, composed both ways round, holding three
+    // plankton — fewer than the coral alone houses (6), so where they live is a
+    // real choice rather than a foregone one.
+    let sea = |placements: [(usize, u8); 2]| {
+        let mut s = State::new();
+        s.score = 30_000 * MICRO; // budget 3 seats the coral (2) beside the rock (1)
+        for &(kind, slot) in &placements {
+            assert!(s.place_reef(kind, slot, &p));
+        }
+        assert!(s.start_run(&p));
+        s.population[Species::Plankton as usize] = 3;
+        s.tick(&p);
+        s.collectable
+    };
+
+    // Both seas shed the same reef output and settle the same share of it; the
+    // only thing that could differ is where the three plankton are housed, and
+    // the costliest reef with room takes them either way.
+    let shed = p.reef_kinds[rock].output + p.reef_kinds[coral].output;
+    let settled = shed - p.recycle.apply(shed);
+    let returned = p
+        .ecosystem_return
+        .apply(3 * u128::from(p.reef_kinds[coral].cost) * MICRO);
+
+    assert_eq!(
+        sea([(coral, 0), (rock, 1)]),
+        settled + returned,
+        "three plankton in a coral+rock sea return three coral heads' worth"
+    );
+    assert_eq!(
+        sea([(rock, 0), (coral, 1)]),
+        settled + returned,
+        "and the same sea placed rock-first returns exactly the same"
+    );
+}
+
 /// Invariant 11 — gradient: after coral unlocks (score 12,000), a re-placed run
 /// that spends budget 2 (either rock×2 or a single coral) collects faster at
 /// steady state than the old budget-1 rock does. This is the existence proof
@@ -524,6 +701,12 @@ fn budget_five_reef_out_collects_the_best_budget_three() {
     // cost-2 lagoon beside a cost-1 reef from 60,000 — all still budget 3, since
     // the schedule's next step is the 75,000 wall. A partial spend houses
     // strictly less, so it can never be the best.
+    //
+    // Which of them wins is not this test's business, but it did change hands
+    // with the ecosystem's return (#30): the best budget-3 sea is now a single
+    // kelp (41.84/tick) rather than three rocks, because a reef's upper tiers
+    // finally pay and one cost-3 reef returns more per head than three cost-1
+    // ones. The assert is the same either way — budget 5 must beat all of them.
     // (#33: lantern, cost 1, opens no budget-3 pair of its own — its unlock is
     // 100,000, past the 75,000 wall that is budget 3's own ceiling here, so
     // lagoon's partner at 60,000 can only be a rock.)
@@ -547,61 +730,6 @@ fn budget_five_reef_out_collects_the_best_budget_three() {
          {kelp_coral} vs best {best_three} \
          (kelp {kelp}, coral+rock {coral_rock}, rock×3 {rock_x3}, grotto {grotto}, \
           lagoon+rock {lagoon_rock})"
-    );
-}
-
-/// Invariant 11c — the floor of the lagoon's accepted collection band: at its
-/// own unlock (60,000) a filled lagoon out-collects the coral it costs the same
-/// as, so the reef a later wall hands out is worth rebuilding around. The same
-/// "rebuilding pays off" proof `regrown_reef_out_collects_the_old_one` states
-/// for coral, applied to the reef that now shares that budget.
-///
-/// The ceiling is the test below, and the two together freeze the agreed band
-/// `coral <= lagoon <= kelp` — see it for what fixes those two ends.
-#[test]
-fn a_filled_lagoon_out_collects_the_coral_it_costs_the_same_as() {
-    const WINDOW: u64 = 5_000;
-    let (coral, lagoon_k) = (kind_index("coral"), kind_index("lagoon"));
-    let t6 = 60_000 * MICRO;
-
-    let lagoon = steady_collection_over_window(&[(lagoon_k, 0)], t6, WINDOW);
-    let coral_only = steady_collection_over_window(&[(coral, 0)], t6, WINDOW);
-
-    assert!(
-        lagoon > coral_only,
-        "a lagoon must out-collect the coral it costs the same as: {lagoon} vs {coral_only}"
-    );
-}
-
-/// Invariant 11d — the ceiling of that band: a filled lagoon stays under a
-/// filled kelp. Kelp is the reef the progression leans on as its collection
-/// anchor — the strongest single reef budget 3 can buy — and a kind unlocking
-/// into the band below it may approach that rate but not pass it, or the
-/// anchor stops meaning anything and the reef ordering reads backwards.
-///
-/// Why *kelp* is the anchor and not the nearest reef by cost: steady collection
-/// in this economy tracks algae housing and reef output almost alone. The tiers
-/// above the algae move biomass around and return it as detritus, so they never
-/// lift the rate — which is why the grotto, at cost 3 with 2 algae, collects
-/// exactly what the cost-2 coral does (measured: both 54,600 per 5,000 ticks at
-/// full housing, against the lagoon's 67,200 and kelp's 98,700). A ceiling read
-/// off cost alone would therefore be an empty band; the ceiling is the anchor
-/// reef instead. Whether the upper tiers should feed the rate at all is a
-/// structural question, open as #30 — until it lands, this band is the line the
-/// design holds, and a new reef that crosses either end turns one of these two
-/// asserts red on purpose.
-#[test]
-fn a_filled_lagoon_stays_under_the_kelp_that_anchors_the_band() {
-    const WINDOW: u64 = 5_000;
-    let (kelp_k, lagoon_k) = (kind_index("kelp"), kind_index("lagoon"));
-    let t6 = 60_000 * MICRO;
-
-    let lagoon = steady_collection_over_window(&[(lagoon_k, 0)], t6, WINDOW);
-    let kelp = steady_collection_over_window(&[(kelp_k, 0)], t6, WINDOW);
-
-    assert!(
-        lagoon <= kelp,
-        "a lagoon must not out-collect the kelp that anchors the band: {lagoon} vs {kelp}"
     );
 }
 

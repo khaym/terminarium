@@ -14,7 +14,7 @@ pub const DEF: ReefDef = ReefDef {
         name: "kelp",
         cost: 3,
         unlock: 30_000 * MICRO,
-        output: 12 * MICRO,
+        output: 23 * MICRO,
         capacity: [9, 5, 2, 1],
     },
     // a solid, wide holdfast

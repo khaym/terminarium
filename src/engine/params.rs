@@ -75,6 +75,13 @@ pub struct Params {
     pub decay: Ratio,
     /// ρ: fraction of detritus recycled to nutrient; the rest is collectable.
     pub recycle: Ratio,
+    /// w: what one individual living above the algae hands back per tick, as a
+    /// fraction of the placement cost of the reef it lives in — the ecosystem's
+    /// return, the economy's third source beside photosynthesis and reef output.
+    /// A rich reef's tenants enrich the sea more than a bare rock's, which is
+    /// what makes the upper tiers worth buying and a reef's cost readable as its
+    /// income (the collection band, work/economy-model.md).
+    pub ecosystem_return: Ratio,
     /// Base purchase cost per species.
     pub base_cost: [u128; SPECIES],
     /// Cost multiplier per owned unit.
@@ -133,6 +140,7 @@ impl Default for Params {
             conversion: Ratio::new(1, 10),
             decay: Ratio::new(1, 100),
             recycle: Ratio::new(3, 10),
+            ecosystem_return: Ratio::new(3, 5),
             base_cost: [100 * MICRO, 450 * MICRO, 900 * MICRO, 4_000 * MICRO],
             cost_growth: Ratio::new(112, 100),
             // The kinds and their order come from the content manifest, where

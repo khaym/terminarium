@@ -1,7 +1,7 @@
 //! The simulation state and its transitions. Pure state machine: no I/O, no
 //! clock, no floats — determinism is what makes offline settlement exact.
 
-use super::params::{Params, Species, SLOTS, SPECIES};
+use super::params::{Params, Species, MICRO, SLOTS, SPECIES};
 
 /// A placed reef: which kind (index into `Params::reef_kinds`) and which floor
 /// slot it occupies. Absolute coordinates live in the renderer, not here.
@@ -163,7 +163,9 @@ impl State {
     }
 
     /// One simulation step (1 tick = 1 second). The step order is part of the
-    /// spec — reordering changes results.
+    /// spec — reordering changes results. Three sources create matter (steps
+    /// 1-3), the middle steps only move it between pools, and step 7 settles
+    /// what came loose.
     pub fn tick(&mut self, p: &Params) {
         let mut detritus: u128 = 0;
 
@@ -174,17 +176,21 @@ impl State {
             detritus += p.reef_kinds[reef.kind].output;
         }
 
-        // 2. Photosynthesis — the only biological creation in the system.
+        // 2. The ecosystem's return — a rich reef's tenants enrich the sea.
+        self.collectable += self.ecosystem_return(p);
+
+        // 3. Photosynthesis — the algae's own creation, and the only source
+        // that lands as living matter rather than as surplus.
         self.pool[0] += u128::from(self.population[0]) * p.photosynthesis;
 
-        // 3. Nutrient uptake by algae (1:1, no remainder).
+        // 4. Nutrient uptake by algae (1:1, no remainder).
         let uptake = self
             .nutrient
             .min(u128::from(self.population[0]) * p.nutrient_uptake);
         self.nutrient -= uptake;
         self.pool[0] += uptake;
 
-        // 4. Predation, ascending trophic order. The conversion remainder
+        // 5. Predation, ascending trophic order. The conversion remainder
         // settles as detritus so no mass is ever lost to rounding.
         for i in 1..SPECIES {
             let demand = u128::from(self.population[i]) * p.demand[i];
@@ -195,7 +201,7 @@ impl State {
             detritus += eaten - converted;
         }
 
-        // 5. Die-off: every pool sheds dead matter (this is also where the
+        // 6. Die-off: every pool sheds dead matter (this is also where the
         // apex predator's output goes).
         for pool in &mut self.pool {
             let dead = p.decay.apply(*pool);
@@ -203,11 +209,50 @@ impl State {
             detritus += dead;
         }
 
-        // 6. Detritus settles immediately.
+        // 7. Detritus settles immediately.
         self.deposit(detritus, p);
 
-        // 7. Advance the run clock.
+        // 8. Advance the run clock.
         self.tick_count += 1;
+    }
+
+    /// The ecosystem's return: `Σ_reefs cost · (individuals housed there above
+    /// the algae) · w`, created fresh every tick. A reef's placement cost is how
+    /// rich a piece of sea it is, so the same fish returns more from a kelp
+    /// forest than from a bare rock — which is what makes the tiers above the
+    /// algae worth buying at all, and a reef's cost readable as its income.
+    ///
+    /// Where an individual lives is not stored: housing settles here, filling
+    /// the costliest reef with room first (ties by placement order, which the
+    /// stable sort keeps). Sorting by cost rather than walking the placement
+    /// list keeps the return a pure function of *which* reefs are down and how
+    /// many creatures live in them — never of the order the player dropped them,
+    /// a difference nothing on screen could explain. Individuals beyond the
+    /// total housing live nowhere and return nothing; `buy` cannot reach that
+    /// state, only a hand-built one can.
+    ///
+    /// The return lands straight in the collectable pile rather than joining the
+    /// detritus that settles at step 7. That is the whole point of the choice:
+    /// routed through the split, ρ of it would come back as free nutrient and
+    /// shift the balance every sea converges to. Landing it in the pile leaves
+    /// the nutrient budget, the living biomass the whale gate reads, and every
+    /// creature on screen exactly as they were — a third source of *income*,
+    /// which is what #30 asked for, and nothing else.
+    fn ecosystem_return(&self, p: &Params) -> u128 {
+        let mut richest: Vec<usize> = (0..self.reefs.len()).collect();
+        richest.sort_by_key(|&i| std::cmp::Reverse(p.reef_kinds[self.reefs[i].kind].cost));
+
+        let mut weighted = 0u128;
+        for species in 1..SPECIES {
+            let mut unhoused = self.population[species];
+            for &i in &richest {
+                let kind = &p.reef_kinds[self.reefs[i].kind];
+                let housed = unhoused.min(kind.capacity[species]);
+                unhoused -= housed;
+                weighted += u128::from(housed) * u128::from(kind.cost);
+            }
+        }
+        p.ecosystem_return.apply(weighted * MICRO)
     }
 
     /// Run `ticks` steps. Offline settlement is exactly this call — there is

@@ -16,7 +16,7 @@ pub const DEF: ReefDef = ReefDef {
         name: "grotto",
         cost: 3,
         unlock: 40_000 * MICRO,
-        output: 12 * MICRO,
+        output: 25 * MICRO,
         capacity: [2, 3, 7, 2],
     },
     // an arch: the gap under the center glyph is the mouth of the cave

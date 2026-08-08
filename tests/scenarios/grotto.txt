@@ -41,7 +41,7 @@ key 2
 key 3
 key 3
 key 4                      # the founding sea is now full: [4, 3, 2, 1]
-wait 3100000               # a filled rock sea makes ~7 score/s
+wait 3100000               # a filled rock sea makes ~10.6 score/s
 expect score >= 40000000000   # the grotto is unlocked
 expect score <= 74999999999   # and the budget-5 wall is still ahead
 
