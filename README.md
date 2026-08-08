@@ -139,6 +139,12 @@ The economy is deterministic and readable in the tests: its rules live in
 
 ## Release history
 
+- **v0.4.0** — The sea swims more naturally, and the scoring is reworked. A
+  fish now and then dashes ahead or turns back early — one swimmer at a time,
+  never the whole shoal. Every creature above the algae tier now earns its
+  keep, so a fish-heavy reef is as real a living as an algae garden, and what
+  a reef earns is pinned to its price. The placement panel and the HUD point
+  at the same next goal, and `terminarium --help` finally answers.
 - **v0.3.0** — A fifth and a sixth reef. The lantern: moss and noctiluca glow
   around an anglerfish's lit lure, past the budget-5 wall (score 100,000). The
   lagoon: jellyfish pulse and drift over the seagrass under a gliding turtle —
